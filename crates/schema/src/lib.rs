@@ -60,6 +60,33 @@ id_type!(MessageId);
 id_type!(PartId);
 id_type!(ToolCallId);
 id_type!(PermissionRequestId);
+id_type!(RunId);
+id_type!(AttemptId);
+id_type!(TaskId);
+id_type!(ArtifactId);
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Revision(pub u64);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum RunOutcome {
+    Completed,
+    Failed,
+    Cancelled,
+    Interrupted,
+    OutcomeUnknown,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct EventEnvelope {
+    pub version: u16,
+    pub sequence: u64,
+    pub run_id: RunId,
+    pub aggregate_revision: Revision,
+    pub kind: String,
+    pub payload: serde_json::Value,
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
