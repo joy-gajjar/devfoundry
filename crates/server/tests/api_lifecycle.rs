@@ -726,3 +726,146 @@ async fn sse_replays_framed_events_and_delivers_post_commit_live_events() {
     assert!(frame.contains("event: message\n"));
     assert!(frame.contains("data: {\"type\":\"session_status\""));
 }
+
+#[tokio::test]
+async fn v2_message_history_returns_bounded_keyset_page_and_cursor() {
+    let (app, directory, _executions) = fixture().await;
+    let session_id = session(&app, &directory).await;
+    let prompt = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/sessions/{session_id}/prompt"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"session_id": session_id, "prompt": "history"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let prompt_id = json_response(prompt).await["prompt_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    wait_for_prompt(&app, &prompt_id, "completed").await;
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v2/sessions/{session_id}/messages?limit=1"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["content-type"], "application/json");
+    let body = json_response(response).await;
+    assert_eq!(body["version"], 2);
+    assert_eq!(body["messages"].as_array().unwrap().len(), 1);
+    assert!(body["next"].is_string());
+}
+
+#[tokio::test]
+async fn v2_message_history_rejects_invalid_cursor_and_limit() {
+    let (app, directory, _executions) = fixture().await;
+    let session_id = session(&app, &directory).await;
+    for (query, code) in [
+        ("limit=0", "invalid_limit"),
+        ("after=not-a-message", "invalid_cursor"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v2/sessions/{session_id}/messages?{query}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(json_response(response).await["code"], code);
+    }
+}
+
+#[tokio::test]
+async fn v2_snapshot_returns_versioned_session_and_replay_cursor() {
+    let (app, directory, _executions) = fixture().await;
+    let session_id = session(&app, &directory).await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v2/sessions/{session_id}/snapshot"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_response(response).await;
+    assert_eq!(body["version"], 2);
+    assert_eq!(body["session"]["id"], session_id);
+    assert!(body["replay"]["after"].is_number());
+    assert!(body["replay"]["events_url"].is_string());
+}
+
+#[tokio::test]
+async fn v2_prompt_does_not_claim_durable_idempotency_without_admission_bridge() {
+    let (app, directory, _executions) = fixture().await;
+    let session_id = session(&app, &directory).await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v2/sessions/{session_id}/prompt"))
+                .header("content-type", "application/json")
+                .header("idempotency-key", "w06-gap-test")
+                .body(Body::from(
+                    json!({"session_id": session_id, "prompt": "hello"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+    assert_eq!(
+        json_response(response).await["code"],
+        "idempotency_unavailable"
+    );
+}
+
+#[tokio::test]
+async fn v2_replay_keeps_sse_framing_and_v1_remains_available() {
+    let (app, directory, _executions) = fixture().await;
+    let session_id = session(&app, &directory).await;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v2/sessions/{session_id}/events?after=0"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["content-type"], "text/event-stream");
+
+    let v1 = app
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/sessions/{session_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(v1.status(), StatusCode::OK);
+    assert_eq!(json_response(v1).await["id"], session_id);
+}

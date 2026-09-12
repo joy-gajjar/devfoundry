@@ -26,6 +26,8 @@ use std::{collections::HashMap, convert::Infallible, sync::Arc};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
+mod routes_v2;
+
 #[derive(Clone)]
 pub struct ServerState {
     pub store: Arc<SqliteStore>,
@@ -181,6 +183,19 @@ pub fn router_with_security(state: ServerState, security: ApiSecurity) -> Router
             post(resolve_permission),
         )
         .route("/api/v1/sessions/{session_id}/events", get(events))
+        .route(
+            "/api/v2/sessions/{session_id}/messages",
+            get(routes_v2::history),
+        )
+        .route(
+            "/api/v2/sessions/{session_id}/snapshot",
+            get(routes_v2::snapshot),
+        )
+        .route(
+            "/api/v2/sessions/{session_id}/prompt",
+            post(routes_v2::idempotent_prompt),
+        )
+        .route("/api/v2/sessions/{session_id}/events", get(events))
         .layer(tower_http::limit::RequestBodyLimitLayer::new(
             MAX_REQUEST_BYTES,
         ))
