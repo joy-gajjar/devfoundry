@@ -17,6 +17,11 @@ use thiserror::Error;
 use tokio::sync::{Mutex, oneshot};
 use tokio_util::sync::CancellationToken;
 
+mod context;
+mod tasks;
+pub use context::ContextManifestBuilder;
+pub use tasks::TaskService;
+
 #[derive(Debug, Error)]
 pub enum CoreError {
     #[error("storage: {0}")]

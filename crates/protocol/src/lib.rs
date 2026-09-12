@@ -8,6 +8,42 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct UpdateTaskRequest {
+    pub expected_revision: Revision,
+    pub title: Option<String>,
+    pub status: Option<devfoundry_schema::TaskStatus>,
+    pub dependencies: Option<Vec<devfoundry_schema::TaskId>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ImportRoadmapRequest {
+    pub markdown: String,
+    pub expected_export_hash: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CreateTaskRequest {
+    pub title: String,
+    pub description: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TaskResponse {
+    pub task: devfoundry_schema::Task,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RoadmapResponse {
+    pub markdown: String,
+    pub revision: Revision,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DocumentListResponse {
+    pub documents: Vec<devfoundry_schema::DocumentMetadata>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CreateSessionRequest {
     pub project_id: ProjectId,
     pub title: Option<String>,

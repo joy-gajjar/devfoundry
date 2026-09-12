@@ -65,6 +65,116 @@ id_type!(AttemptId);
 id_type!(TaskId);
 id_type!(ArtifactId);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatus {
+    Draft,
+    Ready,
+    Assigned,
+    Running,
+    Blocked,
+    Review,
+    Accepted,
+    Cancelled,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Task {
+    pub id: TaskId,
+    pub project_id: ProjectId,
+    pub title: String,
+    pub description: String,
+    pub status: TaskStatus,
+    pub revision: Revision,
+    pub dependencies: Vec<TaskId>,
+    pub session_id: Option<SessionId>,
+    pub evidence_id: Option<ArtifactId>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl Task {
+    pub fn new(title: impl Into<String>, description: impl Into<String>) -> Self {
+        Self::new_for_project(ProjectId::new(), title, description)
+    }
+
+    pub fn new_for_project(
+        project_id: ProjectId,
+        title: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
+        let now = Utc::now();
+        Self {
+            id: TaskId::new(),
+            project_id,
+            title: title.into(),
+            description: description.into(),
+            status: TaskStatus::Draft,
+            revision: Revision(0),
+            dependencies: Vec::new(),
+            session_id: None,
+            evidence_id: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ContextSource {
+    pub identity: String,
+    pub content_hash: String,
+    pub provenance: String,
+}
+
+impl ContextSource {
+    pub fn new(
+        identity: impl Into<String>,
+        content_hash: impl Into<String>,
+        provenance: impl Into<String>,
+    ) -> Self {
+        Self {
+            identity: identity.into(),
+            content_hash: content_hash.into(),
+            provenance: provenance.into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ContextManifest {
+    pub version: u16,
+    pub sources: Vec<ContextSource>,
+    pub unresolved_tool_groups: Vec<String>,
+}
+
+impl ContextManifest {
+    pub fn new(sources: Vec<ContextSource>) -> Self {
+        Self {
+            version: 1,
+            sources,
+            unresolved_tool_groups: Vec::new(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DocumentMetadata {
+    pub path: String,
+    pub content_hash: String,
+    pub links: Vec<String>,
+}
+
+impl DocumentMetadata {
+    pub fn new(path: impl Into<String>, content_hash: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            content_hash: content_hash.into(),
+            links: Vec::new(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Revision(pub u64);

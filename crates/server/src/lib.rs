@@ -27,6 +27,8 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 mod routes_v2;
+mod routes_w10;
+pub mod w10;
 
 #[derive(Clone)]
 pub struct ServerState {
@@ -196,6 +198,26 @@ pub fn router_with_security(state: ServerState, security: ApiSecurity) -> Router
             post(routes_v2::idempotent_prompt),
         )
         .route("/api/v2/sessions/{session_id}/events", get(events))
+        .route(
+            "/api/v2/workspaces/{workspace_id}/tasks",
+            get(routes_w10::list_tasks).post(routes_w10::create_task),
+        )
+        .route(
+            "/api/v2/workspaces/{workspace_id}/roadmap/export",
+            post(routes_w10::export_roadmap),
+        )
+        .route(
+            "/api/v2/workspaces/{workspace_id}/roadmap/import",
+            post(routes_w10::import_roadmap),
+        )
+        .route(
+            "/api/v2/projects/{project_id}/documents",
+            get(routes_w10::list_documents),
+        )
+        .route(
+            "/api/v2/tasks/{task_id}",
+            get(routes_w10::get_task).patch(routes_w10::update_task),
+        )
         .layer(tower_http::limit::RequestBodyLimitLayer::new(
             MAX_REQUEST_BYTES,
         ))

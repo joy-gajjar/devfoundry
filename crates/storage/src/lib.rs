@@ -22,6 +22,56 @@ use std::{
 };
 use tokio::sync::broadcast;
 
+mod documents;
+mod tasks;
+pub use documents::DocumentRepository;
+pub use tasks::{TaskRepository, TaskUpdate};
+
+#[async_trait]
+pub trait ContextRepository {
+    async fn save_context_manifest(
+        &self,
+        project_id: ProjectId,
+        manifest: &devfoundry_schema::ContextManifest,
+    ) -> StorageResult<String>;
+    async fn get_context_manifest(
+        &self,
+        id: &str,
+    ) -> StorageResult<Option<devfoundry_schema::ContextManifest>>;
+}
+
+#[async_trait]
+impl ContextRepository for SqliteStore {
+    async fn save_context_manifest(
+        &self,
+        project_id: ProjectId,
+        manifest: &devfoundry_schema::ContextManifest,
+    ) -> StorageResult<String> {
+        let id = ulid::Ulid::new().to_string();
+        sqlx::query("INSERT INTO context_manifests (id, project_id, payload, created_at) VALUES (?, ?, ?, datetime('now'))")
+            .bind(&id).bind(project_id.to_string()).bind(serde_json::to_string(manifest).map_err(|e| sqlx::Error::Protocol(e.to_string()))?)
+            .execute(self.pool()).await?;
+        Ok(id)
+    }
+
+    async fn get_context_manifest(
+        &self,
+        id: &str,
+    ) -> StorageResult<Option<devfoundry_schema::ContextManifest>> {
+        let payload =
+            sqlx::query_scalar::<_, String>("SELECT payload FROM context_manifests WHERE id = ?")
+                .bind(id)
+                .fetch_optional(self.pool())
+                .await?;
+        payload
+            .map(|value| {
+                serde_json::from_str(&value)
+                    .map_err(|e| StorageError::Database(sqlx::Error::Protocol(e.to_string())))
+            })
+            .transpose()
+    }
+}
+
 pub type StorageResult<T> = Result<T, StorageError>;
 
 #[derive(Debug, thiserror::Error)]
