@@ -127,13 +127,28 @@ pub struct ToolContext {
 
 impl ToolContext {
     pub fn resolve(&self, relative: &str) -> Result<PathBuf, ToolError> {
-        let path = self.root.join(relative);
         let root = self
             .root
             .canonicalize()
             .map_err(|error| ToolError::Failed(error.to_string()))?;
-        let mut parent = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+        let requested = Path::new(relative);
+        if requested.is_absolute()
+            || requested
+                .components()
+                .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return Err(ToolError::Failed("path escapes project root".into()));
+        }
+        let path = root.join(requested);
+        let mut parent = path
+            .parent()
+            .ok_or_else(|| ToolError::Failed("path has no parent".into()))?
+            .to_path_buf();
+        let mut suffix = Vec::new();
         while !parent.exists() {
+            if let Some(name) = parent.file_name() {
+                suffix.push(name.to_os_string());
+            }
             parent = parent
                 .parent()
                 .map(Path::to_path_buf)
@@ -145,7 +160,14 @@ impl ToolContext {
         let file_name = path
             .file_name()
             .ok_or_else(|| ToolError::Failed("path has no file name".into()))?;
-        let candidate = canonical_parent.join(file_name);
+        let candidate = suffix
+            .iter()
+            .rev()
+            .fold(canonical_parent, |path, component| path.join(component))
+            .join(file_name);
+        if !candidate.starts_with(&root) {
+            return Err(ToolError::Failed("path escapes project root".into()));
+        }
         if candidate.symlink_metadata().is_ok() {
             let canonical_candidate = candidate
                 .canonicalize()
@@ -153,9 +175,6 @@ impl ToolContext {
             if !canonical_candidate.starts_with(&root) {
                 return Err(ToolError::Failed("path escapes project root".into()));
             }
-        }
-        if !candidate.starts_with(&root) {
-            return Err(ToolError::Failed("path escapes project root".into()));
         }
         Ok(candidate)
     }
@@ -728,18 +747,28 @@ where
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .replace(std::path::MAIN_SEPARATOR, "/");
-            if entry
+            let file_type = entry
                 .file_type()
                 .await
-                .map_err(|e| ToolError::Failed(e.to_string()))?
-                .is_dir()
-            {
+                .map_err(|e| ToolError::Failed(e.to_string()))?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
                 if entry.file_name() != ".git" && entry.file_name() != "target" {
-                    stack.push(path);
+                    let canonical = match path.canonicalize() {
+                        Ok(path) if path.starts_with(root) => path,
+                        _ => continue,
+                    };
+                    stack.push(canonical);
                 }
             } else {
+                let canonical = match path.canonicalize() {
+                    Ok(path) if path.starts_with(root) => path,
+                    _ => continue,
+                };
                 files += 1;
-                let _ = visit(&relative, &path);
+                let _ = visit(&relative, &canonical);
             }
         }
     }
@@ -958,12 +987,16 @@ async fn run_command_with_operation(
         .arg("-c")
         .arg(command)
         .current_dir(root)
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     configure_process_group(&mut command_process);
     let mut child = command_process
         .spawn()
         .map_err(|error| ToolError::Failed(error.to_string()))?;
+    #[cfg(unix)]
+    let child_pid = child.id();
     #[cfg(windows)]
     let job = match attach_job_object(&child) {
         Ok(job) => job,
@@ -977,48 +1010,62 @@ async fn run_command_with_operation(
     };
     let stdout = child.stdout.take().expect("stdout was piped");
     let stderr = child.stderr.take().expect("stderr was piped");
-    let stdout_task = tokio::spawn(read_bounded(stdout));
-    let stderr_task = tokio::spawn(read_bounded(stderr));
-    let failure = {
+    let mut stdout_task = tokio::spawn(read_bounded(stdout));
+    let mut stderr_task = tokio::spawn(read_bounded(stderr));
+    let outcome = {
         let wait = tokio::time::timeout(timeout, child.wait());
         tokio::pin!(wait);
         tokio::select! {
-            _ = context.cancellation.cancelled() => Some(ToolError::Domain(DomainError::Cancelled)),
+            _ = context.cancellation.cancelled() => Err(ToolError::Domain(DomainError::Cancelled)),
             result = &mut wait => result
                 .map_err(|_| ToolError::Failed("command timed out".into()))
                 .and_then(|result| result.map_err(|error| ToolError::Failed(error.to_string())))
-                .err(),
         }
     };
-    if let Some(failure) = failure {
-        #[cfg(unix)]
-        terminate_process_group(&mut child)
-            .await
-            .map_err(|error| ToolError::Failed(error.to_string()))?;
-        #[cfg(windows)]
-        terminate_process_group(&mut child, &job)
-            .await
-            .map_err(|error| ToolError::Failed(error.to_string()))?;
-        #[cfg(all(not(unix), not(windows)))]
-        terminate_process_group(&mut child)
-            .await
-            .map_err(|error| ToolError::Failed(error.to_string()))?;
-        child
-            .wait()
-            .await
-            .map_err(|error| ToolError::Failed(error.to_string()))?;
-        stdout_task.abort();
-        stderr_task.abort();
-        return Err(failure);
-    }
-    let stdout = stdout_task
-        .await
-        .map_err(|error| ToolError::Failed(error.to_string()))?
-        .map_err(|error| ToolError::Failed(error.to_string()))?;
-    let stderr = stderr_task
-        .await
-        .map_err(|error| ToolError::Failed(error.to_string()))?
-        .map_err(|error| ToolError::Failed(error.to_string()))?;
+    let status = match outcome {
+        Ok(status) => status,
+        Err(failure) => {
+            #[cfg(unix)]
+            terminate_process_group(&mut child)
+                .await
+                .map_err(|error| ToolError::Failed(error.to_string()))?;
+            #[cfg(windows)]
+            terminate_process_group(&mut child, &job)
+                .await
+                .map_err(|error| ToolError::Failed(error.to_string()))?;
+            #[cfg(all(not(unix), not(windows)))]
+            terminate_process_group(&mut child)
+                .await
+                .map_err(|error| ToolError::Failed(error.to_string()))?;
+            child
+                .wait()
+                .await
+                .map_err(|error| ToolError::Failed(error.to_string()))?;
+            stdout_task.abort();
+            stderr_task.abort();
+            return Err(failure);
+        }
+    };
+    let output = tokio::time::timeout(Duration::from_millis(100), async {
+        tokio::try_join!(&mut stdout_task, &mut stderr_task)
+    })
+    .await;
+    let output = match output {
+        Ok(output) => output.map_err(|error| ToolError::Failed(error.to_string()))?,
+        Err(_) => {
+            #[cfg(unix)]
+            if let Some(pid) = child_pid {
+                terminate_process_group_id(pid)
+                    .map_err(|error| ToolError::Failed(error.to_string()))?;
+            }
+            stdout_task.abort();
+            stderr_task.abort();
+            return Err(ToolError::Failed("command output cleanup timed out".into()));
+        }
+    };
+    let (stdout, stderr) = output;
+    let stdout = stdout.map_err(|error| ToolError::Failed(error.to_string()))?;
+    let stderr = stderr.map_err(|error| ToolError::Failed(error.to_string()))?;
     let mut text = stdout;
     text.extend(stderr);
     let truncated = text.len() > MAX_OUTPUT_BYTES;
@@ -1026,6 +1073,12 @@ async fn run_command_with_operation(
         String::from_utf8_lossy(&text[..text.len().min(MAX_OUTPUT_BYTES)]).into_owned();
     while output.len() > MAX_OUTPUT_BYTES {
         output.pop();
+    }
+    if !status.success() {
+        return Err(ToolError::Failed(match status.code() {
+            Some(code) => format!("command exited with exit code {code}"),
+            None => "command terminated by signal".into(),
+        }));
     }
     Ok(ToolOutput {
         truncated,
@@ -1056,6 +1109,11 @@ async fn terminate_process_group(child: &mut tokio::process::Child) -> io::Resul
     let Some(pid) = child.id() else {
         return Ok(());
     };
+    terminate_process_group_id(pid)
+}
+
+#[cfg(unix)]
+fn terminate_process_group_id(pid: u32) -> io::Result<()> {
     let result = unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGKILL) };
     let error = io::Error::last_os_error();
     if result == 0 || error.raw_os_error() == Some(libc::ESRCH) {
@@ -1151,11 +1209,19 @@ async fn terminate_process_group(child: &mut tokio::process::Child) -> io::Resul
 }
 
 async fn read_bounded<R: AsyncRead + Unpin>(reader: R) -> io::Result<Vec<u8>> {
+    let mut reader = reader;
     let mut bytes = Vec::with_capacity(MAX_OUTPUT_BYTES + 1);
-    reader
-        .take((MAX_OUTPUT_BYTES + 1) as u64)
-        .read_to_end(&mut bytes)
-        .await?;
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let count = reader.read(&mut buffer).await?;
+        if count == 0 {
+            break;
+        }
+        if bytes.len() < MAX_OUTPUT_BYTES + 1 {
+            let retained = count.min(MAX_OUTPUT_BYTES + 1 - bytes.len());
+            bytes.extend_from_slice(&buffer[..retained]);
+        }
+    }
     Ok(bytes)
 }
 
@@ -1331,7 +1397,7 @@ mod tests {
         let root = temp_root();
         let result = context(&root).resolve("../outside");
         assert!(result.is_err());
-        fs::remove_dir(root).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(unix)]
@@ -1345,6 +1411,43 @@ mod tests {
         fs::remove_file(root.join("link")).unwrap();
         fs::remove_dir(root).unwrap();
         fs::remove_dir(outside).unwrap();
+    }
+
+    #[tokio::test]
+    async fn missing_nested_suffix_is_preserved() {
+        let root = temp_root();
+        let resolved = context(&root).resolve("new/nested/file.txt").unwrap();
+        assert_eq!(
+            resolved,
+            root.canonicalize().unwrap().join("new/nested/file.txt")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn grep_rejects_external_symlink() {
+        use std::os::unix::fs::symlink;
+        let root = temp_root();
+        let outside = temp_root();
+        fs::write(outside.join("secret.txt"), "outside marker").unwrap();
+        symlink(&outside, root.join("linked")).unwrap();
+
+        let result = GrepTool
+            .execute(
+                ToolRequest {
+                    name: "grep".into(),
+                    arguments: serde_json::json!({"pattern": "outside marker"}),
+                },
+                context(&root),
+            )
+            .await
+            .unwrap();
+        assert!(!result.text.contains("outside marker"));
+
+        fs::remove_file(root.join("linked")).unwrap();
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
     }
 
     #[tokio::test]
@@ -1420,6 +1523,27 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(allowed.text, "safe");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn sensitive_alias_is_denied() {
+        let root = temp_root();
+        fs::write(root.join(".env.local"), "TOKEN=secret").unwrap();
+        let result = ReadTool
+            .execute(
+                ToolRequest {
+                    name: "read".into(),
+                    arguments: serde_json::json!({"path": ".env.local"}),
+                },
+                context(&root),
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Err(ToolError::Domain(DomainError::PermissionDenied { operation }))
+                if operation == "read"
+        ));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1828,6 +1952,11 @@ mod tests {
             permissions: Arc::new(DenyWorktree),
             cancellation: CancellationToken::new(),
         };
+        std::process::Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(&root)
+            .status()
+            .unwrap();
         let result = GitStatusTool
             .execute(
                 ToolRequest {
@@ -1842,8 +1971,8 @@ mod tests {
             Err(ToolError::Domain(DomainError::PermissionDenied { operation }))
                 if operation == "git_worktree"
         ));
-        assert!(!root.join(".git").exists());
-        fs::remove_dir(root).unwrap();
+        assert!(root.join(".git").exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]
@@ -1919,6 +2048,49 @@ mod tests {
             result,
             Err(ToolError::Domain(DomainError::Cancelled))
         ));
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn exit_seven_is_failed_with_exit_code() {
+        let root = temp_root();
+        let result = run_command("exit 7", &context(&root)).await;
+        assert!(matches!(
+            result,
+            Err(ToolError::Failed(message)) if message.contains("exit code 7")
+        ));
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn grandchild_pipe_does_not_outlive_deadline() {
+        let root = temp_root();
+        let started = std::time::Instant::now();
+        let result = run_command_with_timeout(
+            "sleep 1 & exit 0",
+            &context(&root),
+            Duration::from_millis(100),
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(started.elapsed() < Duration::from_millis(500));
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn provider_token_is_not_in_child_environment() {
+        let root = temp_root();
+        // SAFETY: this test runs in the process-local test environment and restores no
+        // shared application state; the child environment is the behavior under test.
+        unsafe { std::env::set_var("GITHUB_COPILOT_TOKEN", "test-provider-secret") };
+        let result = run_command("env", &context(&root)).await.unwrap();
+        unsafe { std::env::remove_var("GITHUB_COPILOT_TOKEN") };
+        assert!(
+            !result
+                .text
+                .contains("GITHUB_COPILOT_TOKEN=test-provider-secret")
+        );
         fs::remove_dir(root).unwrap();
     }
 }

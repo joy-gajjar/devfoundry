@@ -53,6 +53,8 @@ pub struct TuiState {
     pub command_palette: bool,
     pub spinner: usize,
     pub scroll_mode: bool,
+    pending_prompt: Option<String>,
+    dismissed_permission: Option<devfoundry_schema::PermissionRequestId>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -100,6 +102,7 @@ impl TuiState {
             Event::PermissionResolved { .. } => {
                 self.pending_permission = None;
                 self.permission_modal = false;
+                self.dismissed_permission = None;
             }
             Event::Error { message, .. } => {
                 self.status = Some(SessionStatus::Error);
@@ -113,10 +116,20 @@ impl TuiState {
     }
 
     pub fn push_user_prompt(&mut self) -> Option<String> {
-        let prompt = std::mem::take(&mut self.input);
+        let prompt = self.begin_prompt_admission()?;
+        self.confirm_prompt_admitted();
+        Some(prompt)
+    }
+
+    pub fn begin_prompt_admission(&mut self) -> Option<String> {
+        if self.pending_prompt.is_some() {
+            return None;
+        }
+        let prompt = self.input.clone();
         if prompt.trim().is_empty() {
             return None;
         }
+        self.pending_prompt = Some(prompt.clone());
         self.scroll = 0;
         self.transcript.push(TranscriptEntry {
             role: TranscriptRole::User,
@@ -127,6 +140,21 @@ impl TuiState {
             text: String::new(),
         });
         Some(prompt)
+    }
+
+    /// Commits the optimistic prompt only after the server accepts admission.
+    pub fn confirm_prompt_admitted(&mut self) {
+        if self.pending_prompt.take().is_some() {
+            self.input.clear();
+        }
+    }
+
+    /// Drops optimistic transcript rows but intentionally leaves the draft editable.
+    pub fn reject_prompt_admission(&mut self) {
+        if self.pending_prompt.take().is_some() {
+            self.transcript
+                .truncate(self.transcript.len().saturating_sub(2));
+        }
     }
 
     pub fn push_assistant_delta(&mut self, text: &str) {
@@ -228,6 +256,10 @@ impl TuiState {
         if key.kind == KeyEventKind::Release {
             return None;
         }
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(event::KeyModifiers::CONTROL) {
+            self.should_exit = true;
+            return None;
+        }
         if !self.permission_modal {
             if key.code == KeyCode::Enter {
                 self.permission_modal = true;
@@ -239,6 +271,7 @@ impl TuiState {
             KeyCode::Char('n') | KeyCode::Char('N') => Some(PermissionApprovalAction::Deny),
             KeyCode::Esc => {
                 self.permission_modal = false;
+                self.dismissed_permission = self.pending_permission.as_ref().map(|p| p.id);
                 Some(PermissionApprovalAction::Cancel)
             }
             _ => None,
@@ -348,10 +381,14 @@ pub fn render(frame: &mut Frame<'_>, state: &TuiState) {
         .split(layout[1]);
     let transcript_width = content_layout[0].width.saturating_sub(2) as usize;
     let transcript = render_transcript(state, spinner, transcript_width.max(1));
+    let transcript_lines = transcript.lines.len();
+    let viewport = content_layout[0].height.saturating_sub(2) as usize;
+    let max_scroll = transcript_lines.saturating_sub(viewport);
+    let top_offset = scroll_top_offset(transcript_lines, viewport, state.scroll);
     let body = Paragraph::new(transcript)
         .block(Block::default().title(title).borders(Borders::ALL))
         .wrap(Wrap { trim: false })
-        .scroll(((state.scroll.min(u16::MAX as usize)) as u16, 0));
+        .scroll((top_offset.min(u16::MAX as usize) as u16, 0));
     frame.render_widget(body, content_layout[0]);
 
     let sidebar = vec![
@@ -409,11 +446,8 @@ pub fn render(frame: &mut Frame<'_>, state: &TuiState) {
             .wrap(Wrap { trim: true }),
         content_layout[1],
     );
-    let transcript_lines = transcript_line_count(state, spinner, transcript_width.max(1));
-    let viewport = content_layout[0].height.saturating_sub(2) as usize;
-    let max_scroll = transcript_lines.saturating_sub(viewport);
-    let mut scrollbar =
-        ScrollbarState::new(transcript_lines.max(1)).position(state.scroll.min(max_scroll));
+    let mut scrollbar = ScrollbarState::new(transcript_lines.max(1))
+        .position(max_scroll.saturating_sub(state.scroll));
     frame.render_stateful_widget(
         Scrollbar::new(ScrollbarOrientation::VerticalRight),
         content_layout[0],
@@ -736,8 +770,14 @@ fn render_table(lines: &mut Vec<Line<'static>>, rows: &[&str], width: usize) {
     }
 }
 
-fn transcript_line_count(state: &TuiState, spinner: &str, width: usize) -> usize {
-    render_transcript(state, spinner, width).lines.len()
+fn scroll_top_offset(
+    total_lines: usize,
+    viewport_lines: usize,
+    distance_from_bottom: usize,
+) -> usize {
+    total_lines
+        .saturating_sub(viewport_lines)
+        .saturating_sub(distance_from_bottom)
 }
 
 pub fn run() -> io::Result<()> {
@@ -1275,7 +1315,9 @@ async fn run_connected_loop(
             next_refresh = Instant::now() + Duration::from_millis(500);
             if let Ok(mut permissions) = client.permissions(session_id).await {
                 state.pending_permission = permissions.drain(..).next();
-                if state.pending_permission.is_some() {
+                if state.pending_permission.as_ref().map(|p| p.id) != state.dismissed_permission
+                    && state.pending_permission.is_some()
+                {
                     state.permission_modal = true;
                     state.status = Some(SessionStatus::WaitingPermission);
                 }
@@ -1352,12 +1394,21 @@ async fn run_connected_loop(
                         }
                         continue;
                     }
-                    if let Some(prompt) = state.handle_key(key) {
-                        if let Err(error) = client.prompt(session_id, &prompt).await {
-                            state.transcript.push(TranscriptEntry {
-                                role: TranscriptRole::System,
-                                text: error.to_string(),
-                            });
+                    let prompt = if key.code == KeyCode::Enter {
+                        state.begin_prompt_admission()
+                    } else {
+                        state.handle_key(key)
+                    };
+                    if let Some(prompt) = prompt {
+                        match client.prompt(session_id, &prompt).await {
+                            Ok(_) => state.confirm_prompt_admitted(),
+                            Err(error) => {
+                                state.reject_prompt_admission();
+                                state.transcript.push(TranscriptEntry {
+                                    role: TranscriptRole::System,
+                                    text: error.to_string(),
+                                });
+                            }
                         }
                     }
                 }
@@ -1432,6 +1483,33 @@ mod tests {
         assert!(state.input.is_empty());
         assert_eq!(state.transcript.len(), 2);
         assert_eq!(state.transcript[1].role, TranscriptRole::Assistant);
+    }
+
+    #[test]
+    fn prompt_draft_is_preserved_until_admission_succeeds() {
+        let mut state = TuiState {
+            input: "retry me".into(),
+            ..Default::default()
+        };
+
+        let prompt = state.begin_prompt_admission();
+
+        assert_eq!(prompt.as_deref(), Some("retry me"));
+        assert_eq!(state.input, "retry me");
+        state.confirm_prompt_admitted();
+        assert!(state.input.is_empty());
+    }
+
+    #[test]
+    fn rejected_prompt_admission_restores_editable_draft() {
+        let mut state = TuiState {
+            input: "retry me".into(),
+            ..Default::default()
+        };
+        assert_eq!(state.begin_prompt_admission().as_deref(), Some("retry me"));
+        state.reject_prompt_admission();
+        assert_eq!(state.input, "retry me");
+        assert!(state.transcript.is_empty());
     }
 
     #[test]
@@ -1639,6 +1717,44 @@ mod tests {
         );
         assert!(!state.permission_modal);
         assert!(state.pending_permission.is_some());
+    }
+
+    #[test]
+    fn dismissed_permission_is_not_reopened_by_authoritative_poll() {
+        let mut state = TuiState {
+            pending_permission: Some(permission()),
+            permission_modal: true,
+            ..Default::default()
+        };
+        let request_id = state.pending_permission.as_ref().unwrap().id;
+        assert_eq!(
+            state.reduce_permission_key(KeyEvent::new(KeyCode::Esc, event::KeyModifiers::NONE)),
+            Some(PermissionApprovalAction::Cancel)
+        );
+        assert_eq!(state.dismissed_permission, Some(request_id));
+    }
+
+    #[test]
+    fn ctrl_c_remains_global_while_permission_has_focus() {
+        let mut state = TuiState {
+            pending_permission: Some(permission()),
+            permission_modal: true,
+            ..Default::default()
+        };
+
+        state.reduce_permission_key(KeyEvent::new(
+            KeyCode::Char('c'),
+            event::KeyModifiers::CONTROL,
+        ));
+
+        assert!(state.should_exit);
+    }
+
+    #[test]
+    fn scroll_distance_is_converted_to_top_anchored_offset() {
+        assert_eq!(scroll_top_offset(100, 20, 0), 80);
+        assert_eq!(scroll_top_offset(100, 20, 3), 77);
+        assert_eq!(scroll_top_offset(100, 20, usize::MAX), 0);
     }
 
     #[test]

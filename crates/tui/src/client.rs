@@ -165,22 +165,15 @@ impl ApiClient {
         }
         let stream = response.bytes_stream();
         Ok(Box::pin(async_stream::try_stream! {
-            let mut buffer = String::new();
+            let mut decoder = SseDecoder::default();
             futures_util::pin_mut!(stream);
             use futures_util::StreamExt;
             while let Some(chunk) = stream.next().await {
-                buffer.push_str(&String::from_utf8_lossy(&chunk?));
-                while let Some((end, delimiter_len)) = sse_frame_end(&buffer) {
-                    let frame = buffer.drain(..end + delimiter_len).collect::<String>();
-                    if let Some(data) = frame.lines().find_map(|line| {
-                        line.strip_prefix("data:").map(str::trim_start)
-                    }) {
-                        let sequence = frame
-                            .lines()
-                            .find_map(|line| line.strip_prefix("id: "))
-                            .and_then(|value| value.parse::<u64>().ok())
-                            .ok_or_else(|| serde_json::Error::io(std::io::Error::other("SSE event is missing id")))?;
-                        yield (EventSequence(sequence), serde_json::from_str::<Event>(data)?);
+                decoder.push(&chunk?)?;
+                while let Some(frame) = decoder.next()? {
+                    let sequence = frame.id.ok_or_else(|| serde_json::Error::io(std::io::Error::other("SSE event is missing id")))?;
+                    if !frame.data.is_empty() {
+                        yield (EventSequence(sequence), serde_json::from_str::<Event>(&frame.data)?);
                     }
                 }
             }
@@ -213,18 +206,75 @@ impl ApiClient {
     }
 }
 
-fn sse_frame_end(buffer: &str) -> Option<(usize, usize)> {
-    match (buffer.find("\r\n\r\n"), buffer.find("\n\n")) {
-        (Some(crlf), Some(lf)) if crlf < lf => Some((crlf, 4)),
-        (Some(crlf), _) => Some((crlf, 4)),
-        (_, Some(lf)) => Some((lf, 2)),
-        _ => None,
+#[derive(Debug, Default, PartialEq, Eq)]
+struct SseFrame {
+    id: Option<u64>,
+    event: Option<String>,
+    data: String,
+}
+
+#[derive(Debug, Default)]
+struct SseDecoder {
+    buffer: Vec<u8>,
+}
+
+impl SseDecoder {
+    const MAX_FRAME_BYTES: usize = 1024 * 1024;
+
+    fn push(&mut self, bytes: &[u8]) -> Result<(), serde_json::Error> {
+        self.buffer.extend_from_slice(bytes);
+        if self.buffer.len() > Self::MAX_FRAME_BYTES {
+            return Err(serde_json::Error::io(std::io::Error::other(
+                "SSE frame is too large",
+            )));
+        }
+        Ok(())
     }
+
+    fn next(&mut self) -> Result<Option<SseFrame>, serde_json::Error> {
+        let Some((end, delimiter_len)) = find_sse_frame_end(&self.buffer) else {
+            return Ok(None);
+        };
+        let frame = self.buffer.drain(..end + delimiter_len).collect::<Vec<_>>();
+        let text = std::str::from_utf8(&frame[..end])
+            .map_err(|error| serde_json::Error::io(std::io::Error::other(error)))?;
+        let mut result = SseFrame::default();
+        let mut data_lines = Vec::new();
+        for line in text.split('\n') {
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            if line.is_empty() || line.starts_with(':') {
+                continue;
+            }
+            let (field, value) = line.split_once(':').map_or((line, ""), |(field, value)| {
+                (field, value.strip_prefix(' ').unwrap_or(value))
+            });
+            match field {
+                "id" => result.id = value.parse().ok(),
+                "event" => result.event = Some(value.to_owned()),
+                "data" => data_lines.push(value),
+                _ => {}
+            }
+        }
+        result.data = data_lines.join("\n");
+        Ok(Some(result))
+    }
+}
+
+fn find_sse_frame_end(buffer: &[u8]) -> Option<(usize, usize)> {
+    for index in 0..buffer.len().saturating_sub(1) {
+        if buffer[index..].starts_with(b"\n\n") {
+            return Some((index, 2));
+        }
+        if buffer[index..].starts_with(b"\r\n\r\n") {
+            return Some((index, 4));
+        }
+    }
+    None
 }
 
 #[cfg(test)]
 mod tests {
-    use super::sse_frame_end;
+    use super::SseDecoder;
     #[test]
     fn sse_data_prefix_accepts_optional_spacing() {
         let line = "data:{\"type\":\"message_delta\"}";
@@ -240,8 +290,29 @@ mod tests {
     }
 
     #[test]
-    fn sse_frame_end_accepts_crlf_and_lf() {
-        assert_eq!(sse_frame_end("data: x\r\n\r\n"), Some((7, 4)));
-        assert_eq!(sse_frame_end("data: x\n\n"), Some((7, 2)));
+    fn sse_decoder_handles_split_utf8_and_multiple_data_lines() {
+        let mut decoder = SseDecoder::default();
+        let payload = b"id: 7\r\nevent: message\r\ndata: {\"text\":\"caf\xc3\xa9\"}\r\n\r\n";
+
+        decoder.push(&payload[..38]).unwrap();
+        assert!(decoder.next().unwrap().is_none());
+        decoder.push(&payload[38..]).unwrap();
+
+        let frame = decoder.next().unwrap().expect("complete SSE frame");
+        assert_eq!(frame.id, Some(7));
+        assert_eq!(frame.event.as_deref(), Some("message"));
+        assert_eq!(frame.data, "{\"text\":\"café\"}");
+    }
+
+    #[test]
+    fn sse_decoder_accepts_id_without_space_and_ignores_comments() {
+        let mut decoder = SseDecoder::default();
+        decoder
+            .push(b": heartbeat\n id: ignored\nid:9\ndata: ok\n\n")
+            .unwrap();
+
+        let frame = decoder.next().unwrap().expect("complete SSE frame");
+        assert_eq!(frame.id, Some(9));
+        assert_eq!(frame.data, "ok");
     }
 }

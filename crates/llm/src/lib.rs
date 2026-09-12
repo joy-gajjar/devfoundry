@@ -32,6 +32,16 @@ pub struct ToolDefinition {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelCapabilities {
+    pub model: String,
+    pub context_limit: Option<u64>,
+    pub supports_tools: bool,
+    pub supports_reasoning: bool,
+    pub supports_images: bool,
+    pub pricing_known: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LlmEvent {
     TextDelta {
@@ -246,8 +256,12 @@ impl LlmProvider for GithubCopilotProvider {
         let mut bytes = response.bytes_stream();
         Ok(Box::pin(async_stream::stream! {
             let mut parser = SseParser::default();
-            while let Some(chunk) = bytes.next().await {
-                if cancellation.is_cancelled() { yield Err(LlmError::Cancelled); return; }
+            loop {
+                let chunk = tokio::select! {
+                    _ = cancellation.cancelled() => { yield Err(LlmError::Cancelled); return; }
+                    chunk = bytes.next() => chunk,
+                };
+                let Some(chunk) = chunk else { break; };
                 let chunk = match chunk { Ok(chunk) => chunk, Err(error) => { yield Err(LlmError::Classified { classification: ProviderErrorClass::Transient, message: error.to_string() }); return; } };
                 match parser.push(&chunk) {
                     Ok(events) => for event in events { yield Ok(event); },
@@ -277,11 +291,58 @@ fn parse_json_completion(body: &str) -> Result<Vec<LlmEvent>, LlmError> {
         ));
     };
     let mut events = Vec::new();
+    if let Some(reasoning) = choice
+        .pointer("/message/reasoning_content")
+        .and_then(serde_json::Value::as_str)
+    {
+        events.push(LlmEvent::ReasoningDelta {
+            text: reasoning.into(),
+        });
+    }
     if let Some(text) = choice
         .pointer("/message/content")
         .and_then(serde_json::Value::as_str)
     {
         events.push(LlmEvent::TextDelta { text: text.into() });
+    }
+    if let Some(tool_calls) = choice
+        .pointer("/message/tool_calls")
+        .and_then(serde_json::Value::as_array)
+    {
+        for tool_call in tool_calls {
+            let id = tool_call
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let name = tool_call
+                .pointer("/function/name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let arguments = tool_call
+                .pointer("/function/arguments")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            validate_arguments(arguments)?;
+            events.push(LlmEvent::ToolCall {
+                id: id.into(),
+                name: name.into(),
+                arguments: arguments.into(),
+            });
+        }
+    }
+    if let Some(usage) = value.get("usage") {
+        events.push(LlmEvent::Usage {
+            input_tokens: usage
+                .get("prompt_tokens")
+                .or_else(|| usage.get("input_tokens"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0),
+            output_tokens: usage
+                .get("completion_tokens")
+                .or_else(|| usage.get("output_tokens"))
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0),
+        });
     }
     if let Some(reason) = choice
         .get("finish_reason")
@@ -305,7 +366,7 @@ fn classify_http_error(status: u16, body: &str) -> LlmError {
     } else if (body_lower.contains("content") && body_lower.contains("filter"))
         || body_lower.contains("content_filter")
         || body_lower.contains("content filtering")
-        || body_lower.contains("filter")
+        || body_lower.trim() == "filter"
     {
         ProviderErrorClass::ContentFiltered
     } else if status == 429 {
@@ -325,15 +386,33 @@ fn classify_http_error(status: u16, body: &str) -> LlmError {
     }
 }
 
+fn validate_arguments(arguments: &str) -> Result<(), LlmError> {
+    if arguments.len() > MAX_TOOL_ARGUMENTS {
+        return Err(LlmError::InvalidData(
+            "tool arguments exceeded size limit".into(),
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Default)]
 struct SseParser {
     buffer: Vec<u8>,
     tool_calls: BTreeMap<usize, (String, String, String)>,
+    finished: bool,
 }
+
+const MAX_SSE_BUFFER: usize = 1024 * 1024;
+const MAX_TOOL_ARGUMENTS: usize = 128 * 1024;
 
 impl SseParser {
     fn push(&mut self, chunk: &[u8]) -> Result<Vec<LlmEvent>, LlmError> {
         self.buffer.extend_from_slice(chunk);
+        if self.buffer.len() > MAX_SSE_BUFFER {
+            return Err(LlmError::InvalidData(
+                "SSE frame exceeded size limit".into(),
+            ));
+        }
         let mut events = Vec::new();
         while let Some(index) = self.buffer.iter().position(|byte| *byte == b'\n') {
             let line = self.buffer.drain(..=index).collect::<Vec<_>>();
@@ -348,6 +427,11 @@ impl SseParser {
             let mut events = Vec::new();
             self.parse_line(&line, &mut events)?;
             return Ok(events);
+        }
+        if !self.finished {
+            return Err(LlmError::InvalidData(
+                "SSE stream ended without a finish event".into(),
+            ));
         }
         Ok(Vec::new())
     }
@@ -364,10 +448,11 @@ impl SseParser {
             return Ok(());
         }
         if data == "[DONE]" {
-            self.emit_tool_calls(events);
+            self.emit_tool_calls(events)?;
             events.push(LlmEvent::Finished {
                 reason: "stop".into(),
             });
+            self.finished = true;
             return Ok(());
         }
         let value = serde_json::from_str::<serde_json::Value>(data)
@@ -431,6 +516,11 @@ impl SseParser {
                     .and_then(serde_json::Value::as_str)
                 {
                     entry.2.push_str(arguments);
+                    if entry.2.len() > MAX_TOOL_ARGUMENTS {
+                        return Err(LlmError::InvalidData(
+                            "tool arguments exceeded size limit".into(),
+                        ));
+                    }
                 }
             }
         }
@@ -438,7 +528,7 @@ impl SseParser {
             .get("finish_reason")
             .and_then(serde_json::Value::as_str)
         {
-            self.emit_tool_calls(events);
+            self.emit_tool_calls(events)?;
             if reason == "content_filter" {
                 return Err(LlmError::Classified {
                     classification: ProviderErrorClass::ContentFiltered,
@@ -448,18 +538,21 @@ impl SseParser {
             events.push(LlmEvent::Finished {
                 reason: reason.into(),
             });
+            self.finished = true;
         }
         Ok(())
     }
 
-    fn emit_tool_calls(&mut self, events: &mut Vec<LlmEvent>) {
+    fn emit_tool_calls(&mut self, events: &mut Vec<LlmEvent>) -> Result<(), LlmError> {
         for (_, (id, name, arguments)) in std::mem::take(&mut self.tool_calls) {
+            validate_arguments(&arguments)?;
             events.push(LlmEvent::ToolCall {
                 id,
                 name,
                 arguments,
             });
         }
+        Ok(())
     }
 }
 
@@ -611,6 +704,73 @@ mod tests {
             error.classification(),
             Some(ProviderErrorClass::ContentFiltered)
         );
+    }
+
+    #[test]
+    fn json_completion_maps_reasoning_tool_call_and_usage() {
+        let events = parse_json_completion(
+            r#"{
+                "choices": [{
+                    "message": {
+                        "reasoning_content": "thinking",
+                        "tool_calls": [{
+                            "id": "opaque-1",
+                            "type": "function",
+                            "function": {"name": "read_file", "arguments": "{\"path\":\"a\"}"}
+                        }]
+                    },
+                    "finish_reason": "tool_calls"
+                }],
+                "usage": {"prompt_tokens": 3, "completion_tokens": 5}
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            events,
+            vec![
+                LlmEvent::ReasoningDelta {
+                    text: "thinking".into()
+                },
+                LlmEvent::ToolCall {
+                    id: "opaque-1".into(),
+                    name: "read_file".into(),
+                    arguments: r#"{"path":"a"}"#.into(),
+                },
+                LlmEvent::Usage {
+                    input_tokens: 3,
+                    output_tokens: 5
+                },
+                LlmEvent::Finished {
+                    reason: "tool_calls".into()
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn unrelated_filter_word_is_not_content_filtering() {
+        let error = classify_http_error(400, "invalid filter parameter");
+        assert_eq!(error.classification(), Some(ProviderErrorClass::Permanent));
+    }
+
+    #[test]
+    fn sse_eof_without_finish_is_invalid_data() {
+        let mut parser = SseParser::default();
+        parser
+            .push(b"data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n")
+            .unwrap();
+        let error = parser.finish().unwrap_err();
+        assert!(matches!(error, LlmError::InvalidData(_)));
+    }
+
+    #[test]
+    fn oversized_tool_arguments_are_rejected() {
+        let arguments = "x".repeat(256 * 1024);
+        let payload = format!(
+            "data: {{\"choices\":[{{\"delta\":{{\"tool_calls\":[{{\"index\":0,\"id\":\"id\",\"function\":{{\"name\":\"tool\",\"arguments\":\"{arguments}\"}}}}]}}}}]}}\n"
+        );
+        let error = SseParser::default().push(payload.as_bytes()).unwrap_err();
+        assert!(matches!(error, LlmError::InvalidData(_)));
     }
 
     #[tokio::test]
