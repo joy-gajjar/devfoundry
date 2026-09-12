@@ -14,6 +14,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
 mod integration;
+mod worktree;
 
 mod lsp;
 #[cfg(target_os = "macos")]
@@ -22,6 +23,9 @@ mod mcp;
 pub use integration::{
     IntegrationCapability, IntegrationContractError, IntegrationDescriptor, IntegrationKind,
     IntegrationRequest,
+};
+pub use worktree::{
+    HumanIntegrationAuthorization, WorktreeManager, WorktreeRequest, WorktreeStatus,
 };
 
 pub use lsp::{
