@@ -9,7 +9,10 @@ use devfoundry_schema::{
 use devfoundry_storage::{EventRepository, SessionRepository, SqliteStore, StorageError};
 use devfoundry_tools::{ToolContext, ToolRegistry, ToolRequest};
 use futures_util::StreamExt;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use thiserror::Error;
 use tokio::sync::{Mutex, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -26,6 +29,12 @@ pub enum CoreError {
     SessionNotFound,
     #[error("context: {0}")]
     Context(String),
+    #[error("session already has an active foreground run")]
+    Conflict,
+    #[error("operation cancelled")]
+    Cancelled,
+    #[error("provider turn limit exceeded")]
+    TurnLimit,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -109,6 +118,7 @@ pub struct SessionRunner {
     provider: Arc<dyn LlmProvider>,
     tools: Arc<ToolRegistry>,
     permissions: Arc<Mutex<HashMap<devfoundry_schema::SessionId, Arc<PermissionService>>>>,
+    active_sessions: Arc<Mutex<HashSet<devfoundry_schema::SessionId>>>,
 }
 
 pub struct PermissionService {
@@ -175,6 +185,20 @@ impl devfoundry_tools::PermissionBroker for PermissionService {
             .create_permission_request(&request)
             .await
             .map_err(|error| devfoundry_schema::DomainError::Validation(error.to_string()))?;
+        let (sender, receiver) = oneshot::channel();
+        self.pending.lock().await.insert(request.id, sender);
+        if let Some(existing) = self
+            .store
+            .get_permission_request(request.id)
+            .await
+            .map_err(|error| devfoundry_schema::DomainError::Validation(error.to_string()))?
+        {
+            if existing.status != PermissionStatus::Pending {
+                if let Some(sender) = self.pending.lock().await.remove(&request.id) {
+                    let _ = sender.send(existing.status == PermissionStatus::Allowed);
+                }
+            }
+        }
         self.store
             .append_event(
                 self.session_id,
@@ -185,8 +209,6 @@ impl devfoundry_tools::PermissionBroker for PermissionService {
             )
             .await
             .map_err(|error| devfoundry_schema::DomainError::Validation(error.to_string()))?;
-        let (sender, receiver) = oneshot::channel();
-        self.pending.lock().await.insert(request.id, sender);
         let allowed = tokio::select! {
             result = receiver => result.unwrap_or(false),
             _ = self.cancellation.cancelled() => {
@@ -225,6 +247,7 @@ impl SessionRunner {
             provider,
             tools,
             permissions: Arc::new(Mutex::new(HashMap::new())),
+            active_sessions: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -233,19 +256,19 @@ impl SessionRunner {
         request_id: PermissionRequestId,
         allowed: bool,
     ) -> Result<bool, CoreError> {
-        let services = self
+        let Some(request) = self.store.get_permission_request(request_id).await? else {
+            return Ok(false);
+        };
+        let service = self
             .permissions
             .lock()
             .await
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        for service in services {
-            if service.resolve(request_id, allowed).await? {
-                return Ok(true);
-            }
+            .get(&request.session_id)
+            .cloned();
+        match service {
+            Some(service) => service.resolve(request_id, allowed).await,
+            None => Ok(false),
         }
-        Ok(false)
     }
 
     pub async fn run(
@@ -254,6 +277,26 @@ impl SessionRunner {
         prompt: String,
         root: std::path::PathBuf,
         cancellation: CancellationToken,
+    ) -> Result<Message, CoreError> {
+        let session_id = session.id;
+        {
+            let mut active = self.active_sessions.lock().await;
+            if !active.insert(session.id) {
+                return Err(CoreError::Conflict);
+            }
+        }
+        let result = self.run_inner(prompt, root, cancellation, session).await;
+        self.active_sessions.lock().await.remove(&session_id);
+        self.permissions.lock().await.remove(&session_id);
+        result
+    }
+
+    async fn run_inner(
+        &self,
+        prompt: String,
+        root: std::path::PathBuf,
+        cancellation: CancellationToken,
+        session: Session,
     ) -> Result<Message, CoreError> {
         let user = Message {
             id: devfoundry_schema::MessageId::new(),
@@ -265,16 +308,16 @@ impl SessionRunner {
             }],
             created_at: Utc::now(),
         };
+        let history = self.store.list_messages(session.id).await?;
         self.store.append_message(&user).await?;
         let policy = AgentPolicy::for_session(&session);
         let context = ContextAssembly::load(&root)?;
-        let mut messages = vec![
-            context.system_message(&session),
-            LlmMessage {
-                role: "user".into(),
-                content: prompt,
-            },
-        ];
+        let mut messages = vec![context.system_message(&session)];
+        messages.extend(history.into_iter().filter_map(message_to_llm));
+        messages.push(LlmMessage {
+            role: "user".into(),
+            content: prompt,
+        });
         let tool_definitions = self.tools.definitions_for(
             self.tools
                 .names()
@@ -283,7 +326,7 @@ impl SessionRunner {
         );
         let mut parts = Vec::new();
         let assistant_id = devfoundry_schema::MessageId::new();
-        for _turn in 0..4 {
+        for turn in 0..4 {
             let request = LlmRequest {
                 model: session.model.model.0.clone(),
                 messages: messages.clone(),
@@ -303,7 +346,10 @@ impl SessionRunner {
                             },
                         )
                         .await;
-                    return Err(error.into());
+                    return Err(match error {
+                        devfoundry_llm::LlmError::Cancelled => CoreError::Cancelled,
+                        other => other.into(),
+                    });
                 }
             };
             let mut calls = Vec::new();
@@ -321,7 +367,10 @@ impl SessionRunner {
                                 },
                             )
                             .await;
-                        return Err(error.into());
+                        return Err(match error {
+                            devfoundry_llm::LlmError::Cancelled => CoreError::Cancelled,
+                            other => other.into(),
+                        });
                     }
                     Ok(event) => match event {
                         LlmEvent::TextDelta { text } => {
@@ -364,6 +413,10 @@ impl SessionRunner {
             }
             if calls.is_empty() {
                 break;
+            }
+            if turn == 3 {
+                self.permissions.lock().await.remove(&session.id);
+                return Err(CoreError::TurnLimit);
             }
             let permissions = Arc::new(PermissionService::new(
                 self.store.clone(),
@@ -446,6 +499,37 @@ impl SessionRunner {
         self.permissions.lock().await.remove(&session.id);
         let _ = (&self.tools, &root);
         Ok(assistant)
+    }
+}
+
+fn message_to_llm(message: Message) -> Option<LlmMessage> {
+    let content = message
+        .parts
+        .into_iter()
+        .map(|part| match part {
+            MessagePart::Text { text, .. } => text,
+            MessagePart::Reasoning { text, .. } => text,
+            MessagePart::ToolCall {
+                name, arguments, ..
+            } => format!("tool call {name}: {arguments}"),
+            MessagePart::ToolResult { output, .. } => output,
+            MessagePart::Error { message, .. } => message,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    if content.is_empty() {
+        None
+    } else {
+        Some(LlmMessage {
+            role: match message.role {
+                MessageRole::User => "user",
+                MessageRole::Assistant => "assistant",
+                MessageRole::System => "system",
+                MessageRole::Tool => "tool",
+            }
+            .into(),
+            content,
+        })
     }
 }
 

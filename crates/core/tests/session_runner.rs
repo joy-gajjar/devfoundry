@@ -26,6 +26,22 @@ struct ScriptedProvider {
     scripts: Mutex<VecDeque<Script>>,
 }
 
+struct CapturingProvider {
+    request: Arc<Mutex<Option<LlmRequest>>>,
+}
+
+#[async_trait]
+impl LlmProvider for CapturingProvider {
+    async fn stream(
+        &self,
+        request: LlmRequest,
+        _cancellation: CancellationToken,
+    ) -> Result<LlmStream, LlmError> {
+        *self.request.lock().unwrap() = Some(request);
+        Ok(Box::pin(stream::iter(vec![finished("stop")])))
+    }
+}
+
 #[async_trait]
 impl LlmProvider for ScriptedProvider {
     async fn stream(
@@ -46,6 +62,41 @@ impl LlmProvider for ScriptedProvider {
 
 struct CountingTool {
     calls: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+struct PermissionTool;
+
+#[async_trait]
+impl Tool for PermissionTool {
+    fn name(&self) -> &'static str {
+        "permission_fixture"
+    }
+
+    fn description(&self) -> &'static str {
+        "A deterministic permission fixture tool."
+    }
+
+    async fn execute(
+        &self,
+        _request: ToolRequest,
+        context: ToolContext,
+    ) -> Result<ToolOutput, ToolError> {
+        match context
+            .permissions
+            .authorize("permission_fixture", "fixture-target")
+            .await?
+        {
+            devfoundry_tools::PermissionDecision::Allow => Ok(ToolOutput {
+                text: "permission granted".into(),
+                truncated: false,
+            }),
+            devfoundry_tools::PermissionDecision::Deny => Err(ToolError::Domain(
+                devfoundry_schema::DomainError::PermissionDenied {
+                    operation: "permission_fixture".into(),
+                },
+            )),
+        }
+    }
 }
 
 #[async_trait]
@@ -233,10 +284,7 @@ async fn cancellation_stops_stream_without_assistant_completion() {
         .await
         .unwrap()
         .unwrap();
-    assert!(matches!(
-        result,
-        Err(CoreError::Provider(LlmError::Cancelled))
-    ));
+    assert!(matches!(result, Err(CoreError::Cancelled)));
     assert_eq!(
         store
             .list_messages(session_id)
@@ -271,4 +319,215 @@ async fn recovery_is_idempotent_and_does_not_rerun_admitted_work() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[tokio::test]
+async fn permission_resolution_after_durable_publish_wakes_the_waiter() {
+    let (store, session, _runner, directory, _calls) = fixture(Vec::new()).await;
+    let mut tools = ToolRegistry::default();
+    tools.register(Arc::new(PermissionTool));
+    let runner = Arc::new(SessionRunner::new(
+        store.clone(),
+        Arc::new(ScriptedProvider {
+            scripts: Mutex::new(VecDeque::from([
+                Script::Events(vec![
+                    Ok(LlmEvent::ToolCall {
+                        id: "permission-call".into(),
+                        name: "permission_fixture".into(),
+                        arguments: "{}".into(),
+                    }),
+                    finished("tool_calls"),
+                ]),
+                Script::Events(vec![finished("stop")]),
+            ])),
+        }),
+        Arc::new(tools),
+    ));
+    let task = tokio::spawn({
+        let runner = runner.clone();
+        let session = session.clone();
+        let root = directory.path().to_path_buf();
+        async move {
+            runner
+                .run(session, "approve".into(), root, CancellationToken::new())
+                .await
+        }
+    });
+    let request = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if let Some(request) = store
+                .list_pending_permissions(session.id)
+                .await
+                .unwrap()
+                .into_iter()
+                .next()
+            {
+                break request;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(runner.resolve_permission(request.id, true).await.unwrap());
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn simultaneous_foreground_runs_are_rejected_per_session() {
+    let (store, session, runner, directory, _calls) = fixture(vec![
+        Script::WaitForCancellation,
+        Script::Events(vec![finished("stop")]),
+    ])
+    .await;
+    let cancellation = CancellationToken::new();
+    let runner = Arc::new(runner);
+    let first = tokio::spawn({
+        let runner = runner.clone();
+        let session = session.clone();
+        let root = directory.path().to_path_buf();
+        let cancellation = cancellation.clone();
+        async move {
+            runner
+                .run(session, "first".into(), root, cancellation)
+                .await
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    let second = runner
+        .run(
+            session,
+            "second".into(),
+            directory.path().into(),
+            CancellationToken::new(),
+        )
+        .await;
+    assert!(second.is_err());
+    cancellation.cancel();
+    let _ = first.await;
+    let _ = store;
+}
+
+#[tokio::test]
+async fn durable_history_is_included_in_the_next_provider_request() {
+    let (store, session, _runner, directory, _calls) = fixture(Vec::new()).await;
+    store
+        .append_message(&devfoundry_schema::Message {
+            id: devfoundry_schema::MessageId::new(),
+            session_id: session.id,
+            role: MessageRole::User,
+            parts: vec![devfoundry_schema::MessagePart::Text {
+                id: devfoundry_schema::PartId::new(),
+                text: "earlier durable prompt".into(),
+            }],
+            created_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+    let call_id = devfoundry_schema::ToolCallId::new();
+    store
+        .append_message(&devfoundry_schema::Message {
+            id: devfoundry_schema::MessageId::new(),
+            session_id: session.id,
+            role: MessageRole::Assistant,
+            parts: vec![devfoundry_schema::MessagePart::ToolCall {
+                id: devfoundry_schema::PartId::new(),
+                call_id,
+                name: "fixture".into(),
+                arguments: "{\"value\":1}".into(),
+            }],
+            created_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+    store
+        .append_message(&devfoundry_schema::Message {
+            id: devfoundry_schema::MessageId::new(),
+            session_id: session.id,
+            role: MessageRole::Tool,
+            parts: vec![devfoundry_schema::MessagePart::ToolResult {
+                id: devfoundry_schema::PartId::new(),
+                call_id,
+                output: "earlier tool output".into(),
+                truncated: false,
+            }],
+            created_at: Utc::now(),
+        })
+        .await
+        .unwrap();
+    let captured = Arc::new(Mutex::new(None));
+    let runner = SessionRunner::new(
+        store.clone(),
+        Arc::new(CapturingProvider {
+            request: captured.clone(),
+        }),
+        Arc::new(ToolRegistry::default()),
+    );
+    let result = runner
+        .run(
+            session,
+            "current prompt".into(),
+            directory.path().into(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+    assert!(result.parts.is_empty());
+    let request = captured.lock().unwrap().clone().unwrap();
+    assert!(
+        request
+            .messages
+            .iter()
+            .any(|message| message.role == "user" && message.content == "earlier durable prompt")
+    );
+    assert!(
+        request
+            .messages
+            .iter()
+            .any(|message| message.role == "user" && message.content == "current prompt")
+    );
+    assert!(
+        request
+            .messages
+            .iter()
+            .any(|message| message.content.contains("tool call fixture"))
+    );
+    assert!(
+        request
+            .messages
+            .iter()
+            .any(|message| message.content == "earlier tool output")
+    );
+}
+
+#[tokio::test]
+async fn exhausting_provider_turns_returns_an_explicit_limit_failure() {
+    let scripts = (0..4)
+        .map(|index| {
+            Script::Events(vec![
+                Ok(LlmEvent::ToolCall {
+                    id: format!("call-{index}"),
+                    name: "fixture".into(),
+                    arguments: "{}".into(),
+                }),
+                finished("tool_calls"),
+            ])
+        })
+        .collect();
+    let (_store, session, runner, directory, _calls) = fixture(scripts).await;
+    let result = runner
+        .run(
+            session,
+            "loop forever".into(),
+            directory.path().into(),
+            CancellationToken::new(),
+        )
+        .await;
+    assert!(result.is_err());
 }
