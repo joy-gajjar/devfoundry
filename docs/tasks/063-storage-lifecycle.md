@@ -9,25 +9,25 @@ Deliver storage-owned transactional lifecycle and restart recovery improvements 
 - Explicitly excluded schema/protocol roots, core, server, tools, TUI, manifests, shared planning documents, database files, credentials, and commits.
 
 ## Design
-The approved design requires atomic prompt admission/settlement, bounded message/event cursor reads, durable monotonic event sequences, idempotent attempt/tool identifiers, and restart recovery that marks interrupted work without replaying unsafe effects. Repository traits must keep SQLx and connection handles private to storage.
+The approved design requires atomic prompt admission/settlement, bounded message/event cursor reads, durable monotonic event sequences, idempotent attempt/tool identifiers, and restart recovery that marks interrupted work without replaying unsafe effects. Repository traits keep SQLx details inside storage; no connection is passed to tools, handlers, or UI.
 
-The current W01 contracts do not provide a run/attempt/tool state model, an ownership/lease contract, an idempotency receipt/conflict type, or a fault-injection boundary. The existing schema contains only `projects`, `sessions`, `messages`, `events`, `prompt_inbox`, and `permission_requests`; it has no `runs`, `tool_calls`, `tool_outputs`, or execution ownership table and no prompt idempotency/payload-hash columns. Creating those structures in W02 would invent an incompatible contract, so implementation is stopped at the approved safety boundary.
+Commit `42943d8` supplied the required W01 lifecycle types. W02 persists runs with `(session_id, idempotency_key)` uniqueness, attempts, execution leases, tool calls/outputs, and per-run `run_events`. `EventEnvelope.sequence` is authoritative per run. The additional storage-only structs `AdmissionInput` and `RunStatusRecord` are inputs/results needed to keep SQLx rows private while adapting to the frozen protocol types; they are not protocol replacements.
 
 ## Implementation
-- Added temporary RED tests for the five named W02 contract-dependent cases in `crates/storage/tests/execution_faults.rs`.
-- The tests deliberately checked for the minimum persisted structures needed to implement the named behaviors without inventing Rust APIs.
-- Removed the temporary tests after RED verification because retaining contract-shape assertions would leave the crate with intentionally failing tests and would incorrectly define W01-owned schema semantics.
-- No migration or production storage code was changed.
+- Added forward-only `migrations/0002_execution_lifecycle.sql`; migration 0001 was not edited.
+- Added transactional admission with same-payload replay and different-payload conflict receipts.
+- Added attempt/tool start, atomic tool settlement (status + bounded output record + event), execution lease claim, run status lookup, and startup recovery to `OutcomeUnknown` for admitted/running/waiting runs and started attempts/tools.
+- Added bounded keyset reads for run events and messages with count and byte limits.
+- Added named lifecycle/fault tests plus bounded-query and atomic-settlement tests in `crates/storage/tests/execution_faults.rs`.
 
 ## Verification
-- `"$HOME/.cargo/bin/cargo" test -p devfoundry-storage --test execution_faults`: **RED**, 0 passed / 5 failed. Failures were expected and specific: missing `runs`, missing `run_events`, missing `prompt_inbox.idempotency_key`, missing `prompt_inbox.payload_hash`, missing `tool_calls`, missing `tool_outputs`, and missing `execution_ownership`.
-- `cargo test ...` without the explicit Cargo path: blocked because `cargo` is not on `PATH`; the repository plan already documents using `$HOME/.cargo/bin/cargo`.
-- Full implementation gates were not run after the contract blocker was established; no passing claim is made for W02.
+- Initial updated-baseline RED compile/run: `"$HOME/.cargo/bin/cargo" test -p devfoundry-storage --test execution_faults`: failed before implementation with unresolved `AdmissionInput` and missing lifecycle methods, proving the tests exercised absent storage behavior.
+- `"$HOME/.cargo/bin/cargo" test -p devfoundry-storage --test execution_faults`: **8 passed, 0 failed** after implementation.
+- Final targeted commands and exact results are recorded in the handoff response; full storage tests, check, clippy, and format check were run after the final edit.
 
 ## Risks And Follow-Up
-- W02 remains blocked until W01 freezes the execution/run/attempt/tool/ownership/idempotency contracts and allocates migration ownership.
-- No safe migration can be authored from the current contracts without deciding persisted statuses, payload identity/hash rules, receipt shape, lease ownership/expiry, event stream scope, and recovery transitions.
-- Existing storage code still has legacy non-transactional prompt admission and settlement paths; changing them safely requires the missing event and lifecycle contract.
-- Existing event sequences are global SQLite autoincrement values despite the domain requirement for per-instance/session monotonic streams; changing that requires the frozen event cursor contract.
-- Existing `pool()` is public for diagnostics/tests. A future repository-boundary pass should replace direct connection exposure with storage-owned diagnostics/test helpers, but that is outside this blocked W02 change and must preserve existing testability deliberately.
-- Roadmap Gate 1 remains open; process-kill/interrupted-commit validation and W02 lifecycle acceptance are not complete.
+- The legacy `prompt_inbox` APIs remain for compatibility; new lifecycle admission uses `runs`. Existing legacy event APIs remain global-sequence based, while W02 run events are per-run monotonic. A later compatibility migration should unify or explicitly deprecate these paths.
+- Fault injection is represented by transaction boundaries and failure tests, but there is no public SQL fault injector; process kill during SQLite commit still needs an external harness.
+- Tool IDs are accepted as stable opaque strings at the storage boundary because W01 does not define a persisted tool-call ID type; callers must supply the same ID for retries.
+- Durable run-event publication is not wired into the legacy `PublishedEvent` channel because its payload type is the older `Event`; reconnect uses durable cursor reads. A protocol-aligned fanout adapter is follow-up work.
+- `pool()` remains public for existing diagnostics/tests; no new caller should use it. A future boundary cleanup should replace it with storage-owned test helpers.

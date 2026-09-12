@@ -682,6 +682,7 @@ dependencies = [
 name = "devfoundry-protocol"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "devfoundry-schema",
  "serde",
  "serde_json",
