@@ -18,14 +18,16 @@ Add the minimal typed identities and transport contracts needed for the staged e
 
 ## Implementation
 
-- `crates/schema/src/lib.rs`: added `RunId`, `AttemptId`, `TaskId`, `ArtifactId`, `Revision`, `RunOutcome`, and `EventEnvelope`.
+- `crates/schema/src/lib.rs`: added `RunId`, `AttemptId`, `TaskId`, `ArtifactId`, `Revision`, `RunOutcome`, `RunStatus`, `AttemptStatus`, `IdempotencyResult`, `ExecutionLease`, and `EventEnvelope`.
 - `crates/schema/Cargo.toml`: added the runtime `serde_json` dependency for the envelope payload.
-- `crates/protocol/src/lib.rs`: added `AttachmentRef` and `SubmitPrompt`.
-- Added round-trip tests for prompt submission and terminal run outcomes.
+- `crates/protocol/src/lib.rs`: added `AttachmentRef`, `SubmitPrompt`, `AdmissionReceipt`, and `RunStatusResponse`.
+- Added round-trip tests for prompt submission, terminal run outcomes, admission conflict states, attempt state, and execution leases.
 
 ## Verification
 
-- `cargo test -p devfoundry-protocol`: passed, 3 tests.
+- `cargo test -p devfoundry-protocol`: passed, 6 tests.
+- `cargo check --workspace --all-targets`: passed.
+- `cargo clippy --workspace --all-targets -- -D warnings`: passed.
 - Full workspace gates are required before W01 acceptance.
 
 ## Risks And Follow-Up

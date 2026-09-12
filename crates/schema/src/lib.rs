@@ -78,6 +78,41 @@ pub enum RunOutcome {
     OutcomeUnknown,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum RunStatus {
+    Admitted,
+    Running,
+    WaitingPermission,
+    Completed,
+    Failed,
+    Cancelled,
+    Interrupted,
+    OutcomeUnknown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum AttemptStatus {
+    Started,
+    Completed,
+    Failed,
+    Cancelled,
+    OutcomeUnknown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum IdempotencyResult {
+    New,
+    Existing,
+    Conflict,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ExecutionLease {
+    pub owner_id: String,
+    pub revision: Revision,
+    pub expires_at: DateTime<Utc>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EventEnvelope {
     pub version: u16,

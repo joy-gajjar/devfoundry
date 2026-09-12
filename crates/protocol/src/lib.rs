@@ -1,6 +1,9 @@
 //! Transport-neutral request and response contracts.
 
-use devfoundry_schema::{AgentName, ArtifactId, ModelRef, ProjectId, Revision, SessionId};
+use devfoundry_schema::{
+    AgentName, ArtifactId, AttemptStatus, IdempotencyResult, ModelRef, ProjectId, Revision,
+    RunStatus, SessionId,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -59,6 +62,66 @@ pub struct SubmitPrompt {
     pub prompt: String,
     pub expected_session_revision: Revision,
     pub attachments: Vec<AttachmentRef>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AdmissionReceipt {
+    pub run_id: devfoundry_schema::RunId,
+    pub revision: Revision,
+    pub idempotency: IdempotencyResult,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RunStatusResponse {
+    pub run_id: devfoundry_schema::RunId,
+    pub status: RunStatus,
+    pub attempt_status: Option<AttemptStatus>,
+    pub revision: Revision,
+}
+
+#[cfg(test)]
+mod lifecycle_contract_tests {
+    use super::*;
+    use devfoundry_schema::{AttemptStatus, ExecutionLease, IdempotencyResult, RunStatus};
+
+    #[test]
+    fn admission_receipt_round_trips_existing_and_conflict_states() {
+        for idempotency in [IdempotencyResult::Existing, IdempotencyResult::Conflict] {
+            let receipt = AdmissionReceipt {
+                run_id: devfoundry_schema::RunId::new(),
+                revision: Revision(7),
+                idempotency,
+            };
+            let decoded: AdmissionReceipt =
+                serde_json::from_str(&serde_json::to_string(&receipt).unwrap()).unwrap();
+            assert_eq!(receipt, decoded);
+        }
+    }
+
+    #[test]
+    fn run_status_response_preserves_attempt_state() {
+        let response = RunStatusResponse {
+            run_id: devfoundry_schema::RunId::new(),
+            status: RunStatus::Running,
+            attempt_status: Some(AttemptStatus::Started),
+            revision: Revision(2),
+        };
+        let decoded: RunStatusResponse =
+            serde_json::from_str(&serde_json::to_string(&response).unwrap()).unwrap();
+        assert_eq!(response, decoded);
+    }
+
+    #[test]
+    fn execution_lease_preserves_owner_and_revision() {
+        let lease = ExecutionLease {
+            owner_id: "host-1".into(),
+            revision: Revision(9),
+            expires_at: chrono::Utc::now(),
+        };
+        let decoded: ExecutionLease =
+            serde_json::from_str(&serde_json::to_string(&lease).unwrap()).unwrap();
+        assert_eq!(lease, decoded);
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
