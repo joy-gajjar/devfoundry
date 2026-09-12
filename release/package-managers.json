@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "product": "devfoundry",
+  "status": "metadata-only",
+  "source": "github-release",
+  "packages": [
+    {
+      "name": "homebrew",
+      "status": "template",
+      "repository": "homebrew-core",
+      "formula": "devfoundry",
+      "template": "release/homebrew/devfoundry.rb.template",
+      "artifact_template": "devfoundry-{version}-{target}.tar.gz",
+      "targets": ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu"],
+      "publication_requirement": "signed-release-handoff",
+      "credentials_required_for_validation": false
+    },
+    {
+      "name": "cargo-binstall",
+      "status": "metadata-only",
+      "crate": "devfoundry",
+      "artifact_template": "devfoundry-{version}-{target}.tar.gz",
+      "targets": ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"],
+      "publication_requirement": "signed-release-handoff",
+      "credentials_required_for_validation": false
+    },
+    {
+      "name": "winget",
+      "status": "template",
+      "identifier": "DevFoundry.DevFoundry",
+      "repository": "microsoft/winget-pkgs",
+      "template": "release/winget/DevFoundry.DevFoundry.yaml.template",
+      "artifact_template": "devfoundry-{version}-{target}.tar.gz",
+      "targets": ["x86_64-pc-windows-msvc"],
+      "publication_requirement": "signed-release-handoff",
+      "credentials_required_for_validation": false
+    }
+  ]
+}

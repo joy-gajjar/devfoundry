@@ -1,0 +1,36 @@
+{
+  "schema_version": 2,
+  "product": "devfoundry",
+  "artifact_policy": {
+    "archive": "tar.gz",
+    "checksum": "sha256",
+    "signature": "handoff-required",
+    "binary": "devfoundry"
+  },
+  "platforms": [
+    {
+      "target": "aarch64-apple-darwin",
+      "runner": "macos-14",
+      "status": "supported",
+      "archive": "tar.gz",
+      "binary": "devfoundry",
+      "install_channel": "github-release"
+    },
+    {
+      "target": "x86_64-unknown-linux-gnu",
+      "runner": "ubuntu-latest",
+      "status": "supported",
+      "archive": "tar.gz",
+      "binary": "devfoundry",
+      "install_channel": "github-release"
+    },
+    {
+      "target": "x86_64-pc-windows-msvc",
+      "runner": "windows-latest",
+      "status": "supported",
+      "archive": "tar.gz",
+      "binary": "devfoundry.exe",
+      "install_channel": "github-release"
+    }
+  ]
+}

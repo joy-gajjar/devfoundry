@@ -1,0 +1,79 @@
+name: Release Build
+
+on:
+  workflow_dispatch:
+
+jobs:
+  validate-distribution:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate secretless release inputs
+        run: bash scripts/validate-secretless.sh
+
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }} -p devfoundry
+      - run: cargo test --workspace
+      - name: Validate TUI terminal contract
+        run: cargo test -p devfoundry-tui --all-targets
+      - name: Package release archive
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          version="${VERSION#v}"
+          binary="target/${{ matrix.target }}/release/devfoundry"
+          if [[ "${{ matrix.target }}" == "x86_64-pc-windows-msvc" ]]; then binary+='.exe'; fi
+          bash scripts/package-release.sh \
+            --binary "$binary" \
+              --target "${{ matrix.target }}" \
+            --version "$version" \
+            --output dist
+      - name: Validate archive and write release evidence
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          version="${VERSION#v}"
+          archive=$(find dist -name '*.tar.gz' -print -quit)
+          checksum="$archive.sha256"
+          bash scripts/release-evidence.sh \
+            --archive "$archive" \
+            --checksum "$checksum" \
+            --target "${{ matrix.target }}" \
+            --version "$version" \
+            --output dist/release-evidence.json \
+            --launch-doctor
+      - name: Prepare publication handoff
+        shell: bash
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          version="${VERSION#v}"
+          bash scripts/prepare-publication.sh \
+            --version "$version" \
+            --artifact-dir dist \
+            --output dist/publication-plan.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: devfoundry-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
+            dist/release-evidence.json
+            dist/publication-plan.json

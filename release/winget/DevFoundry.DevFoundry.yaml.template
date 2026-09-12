@@ -1,0 +1,24 @@
+PackageIdentifier: DevFoundry.DevFoundry
+PackageVersion: <VERSION>
+PackageLocale: en-US
+Publisher: DevFoundry
+PublisherUrl: https://github.com/<OWNER>/<REPOSITORY>
+PackageName: DevFoundry
+License: MIT
+ShortDescription: A local-first AI coding agent
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
+---
+PackageIdentifier: DevFoundry.DevFoundry
+PackageVersion: <VERSION>
+InstallerType: zip
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/<OWNER>/<REPOSITORY>/releases/download/v<VERSION>/devfoundry-<VERSION>-x86_64-pc-windows-msvc.tar.gz
+    InstallerSha256: <SHA256_X86_64_PC_WINDOWS_MSVC>
+    NestedInstallerType: portable
+    NestedInstallerFiles:
+      - RelativeFilePath: devfoundry-<VERSION>-x86_64-pc-windows-msvc/devfoundry.exe
+        PortableCommandAlias: devfoundry
+ManifestType: installer
+ManifestVersion: 1.6.0

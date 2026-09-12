@@ -1,0 +1,19 @@
+[package]
+name = "devfoundry-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+devfoundry-schema = { path = "../schema" }
+async-trait.workspace = true
+chrono.workspace = true
+sqlx.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

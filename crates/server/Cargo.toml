@@ -1,0 +1,30 @@
+[package]
+name = "devfoundry-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-stream.workspace = true
+axum.workspace = true
+chrono.workspace = true
+futures-util.workspace = true
+devfoundry-core = { path = "../core" }
+devfoundry-llm = { path = "../llm" }
+devfoundry-protocol = { path = "../protocol" }
+devfoundry-schema = { path = "../schema" }
+devfoundry-storage = { path = "../storage" }
+devfoundry-tools = { path = "../tools" }
+serde_json.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tower-http.workspace = true
+ulid.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+http-body-util = "0.1"
+tempfile = "3"
+tower = "0.5"

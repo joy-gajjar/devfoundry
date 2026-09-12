@@ -1,0 +1,20 @@
+# Local runtime data and SQLite sidecars
+*.db
+*.db-shm
+*.db-wal
+
+# Rust build output
+target/
+
+# macOS metadata
+.DS_Store
+
+# Local credentials and environment files
+.env
+.env.*
+!.env.example
+
+# Editor and tool caches
+.idea/
+.vscode/
+.codebase-memory/

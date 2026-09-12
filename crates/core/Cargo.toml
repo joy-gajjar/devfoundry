@@ -1,0 +1,24 @@
+[package]
+name = "devfoundry-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+futures-util.workspace = true
+devfoundry-llm = { path = "../llm" }
+devfoundry-schema = { path = "../schema" }
+devfoundry-storage = { path = "../storage" }
+devfoundry-tools = { path = "../tools" }
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+
+[dev-dependencies]
+async-stream.workspace = true
+sqlx.workspace = true
+tempfile = "3"

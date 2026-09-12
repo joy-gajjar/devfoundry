@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "product": "devfoundry",
+  "mode": "handoff-only",
+  "release_source": "github-actions-artifact",
+  "required_artifacts": ["archive", "sha256", "signature", "signing-metadata"],
+  "publication_channels": ["github-release", "homebrew", "cargo-binstall", "winget"],
+  "authentication": "performed-by-release-owner",
+  "private_keys_in_ci": false,
+  "next_step": "Validate the signed handoff on a trusted host before publishing."
+}

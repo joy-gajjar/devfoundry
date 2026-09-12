@@ -1,0 +1,8 @@
+{
+    "model": "gpt-4o",
+    "provider": {
+        "kind": "github-copilot",
+        "base_url": "https://api.githubcopilot.com",
+        "token_env": "GITHUB_COPILOT_TOKEN"
+    }
+}

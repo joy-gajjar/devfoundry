@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "product": "devfoundry",
+  "current_version_source": "cargo-package-version",
+  "channel": "stable",
+  "latest_version_source": "github-release-tag",
+  "endpoint_template": "https://api.github.com/repos/<OWNER>/<REPOSITORY>/releases/latest",
+  "credentials_required": false,
+  "default_behavior": "disabled",
+  "opt_in_command": "devfoundry update --check",
+  "notification": {
+    "style": "single-line-stderr",
+    "frequency": "at-most-once-per-24-hours",
+    "timeout_seconds": 2,
+    "failure_behavior": "silent",
+    "never_blocks_startup": true
+  },
+  "privacy": {
+    "sends_project_paths": false,
+    "sends_provider_tokens": false,
+    "stores_only": "last-check-timestamp-and-latest-version",
+    "disable_environment_variable": "DEVFOUNDRY_NO_UPDATE_CHECK"
+  },
+  "installation": "package-manager-or-explicit-archive",
+  "automatic_download": false
+}

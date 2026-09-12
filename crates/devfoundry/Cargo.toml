@@ -1,0 +1,44 @@
+[package]
+name = "devfoundry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "A local-first coding agent with a terminal UI"
+repository = "https://github.com/<OWNER>/<REPOSITORY>"
+readme = "../../docs/release.md"
+keywords = ["coding-agent", "cli", "terminal-ui"]
+categories = ["command-line-utilities", "development-tools"]
+
+[package.metadata.binstall]
+bin-dir = "{ name }-{ version }-{ target }/{ bin }{ binary-ext }"
+pkg-url = "https://github.com/<OWNER>/<REPOSITORY>/releases/download/v{ version }/{ name }-{ version }-{ target }.tar.gz"
+pkg-fmt = "tgz"
+
+[[bin]]
+name = "devfoundry"
+path = "src/main.rs"
+
+[dependencies]
+async-trait.workspace = true
+clap.workspace = true
+axum.workspace = true
+reqwest.workspace = true
+devfoundry-schema = { path = "../schema" }
+devfoundry-protocol = { path = "../protocol" }
+devfoundry-storage = { path = "../storage" }
+devfoundry-llm = { path = "../llm" }
+devfoundry-core = { path = "../core" }
+devfoundry-server = { path = "../server" }
+devfoundry-tui = { path = "../tui" }
+devfoundry-tools = { path = "../tools" }
+futures-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+semver.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

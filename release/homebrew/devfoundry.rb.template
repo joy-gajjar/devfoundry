@@ -1,0 +1,26 @@
+class Devfoundry < Formula
+  desc "A local-first AI coding agent"
+  homepage "https://github.com/<OWNER>/<REPOSITORY>"
+  version "<VERSION>"
+  license "MIT"
+
+  on_macos do
+    if Hardware::CPU.arm?
+      url "https://github.com/<OWNER>/<REPOSITORY>/releases/download/v<VERSION>/devfoundry-<VERSION>-aarch64-apple-darwin.tar.gz"
+      sha256 "<SHA256_AARCH64_APPLE_DARWIN>"
+    end
+  end
+
+  on_linux do
+    url "https://github.com/<OWNER>/<REPOSITORY>/releases/download/v<VERSION>/devfoundry-<VERSION>-x86_64-unknown-linux-gnu.tar.gz"
+    sha256 "<SHA256_X86_64_UNKNOWN_LINUX_GNU>"
+  end
+
+  def install
+    bin.install "devfoundry"
+  end
+
+  test do
+    assert_match "devfoundry", shell_output("#{bin}/devfoundry --version")
+  end
+end

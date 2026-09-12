@@ -1,0 +1,20 @@
+[package]
+name = "devfoundry-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+chrono.workspace = true
+crossterm.workspace = true
+async-stream.workspace = true
+futures-util.workspace = true
+devfoundry-protocol = { path = "../protocol" }
+devfoundry-schema = { path = "../schema" }
+reqwest.workspace = true
+ratatui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
