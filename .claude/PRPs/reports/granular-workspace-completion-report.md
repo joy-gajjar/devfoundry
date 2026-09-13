@@ -4,7 +4,7 @@
 
 Executed the deferred completion plan on `feat/granular-workspace` after the existing foundation through commit `a9709ac`. The campaign added durable worker execution persistence, opt-in browser hosting/auth boundaries, resource/preview/terminal surfaces, notification metadata/outbox, and the remaining security/test documentation.
 
-The campaign did not falsely enable unsafe or unverified behavior. W19 now has an explicit core `execute_admitted` bridge through a required worktree adapter plus a server assignment boundary that validates project/session/provider/Git prerequisites, claims durable leases and schedules worker execution; restart-safe external process recovery remains open. W22 resource mutation remains partially fail-closed. W23 native credential enablement remains blocked because dependency audit tooling and disposable native fixtures are unavailable. Linux/Windows runtime support and release archive verification remain external gates.
+The campaign did not falsely enable unsafe or unverified behavior. W19 now has an explicit core `execute_admitted` bridge through a required worktree adapter plus a server assignment boundary that validates project/session/provider/Git prerequisites, claims durable leases and schedules worker execution; restart-safe external process recovery remains open. W22 archive security, installed-hash replacement, rollback and edited-file-preserving removal are implemented; update-over-existing-target and broker-enabled mutation remain fail-closed. W23 native credential enablement remains blocked because dependency audit tooling and disposable native fixtures are unavailable. Linux/Windows runtime support and release archive verification remain external gates.
 
 ## Assessment vs Reality
 
@@ -22,7 +22,7 @@ The campaign did not falsely enable unsafe or unverified behavior. W19 now has a
 | W19 | Durable scheduler persistence and worker boundary | Partial complete | Commit `62bada9` plus current bridge changes; durable run/attempt/evidence flow now has an explicit core execution path requiring a worktree adapter. Server-driven assignment and restart-safe external process recovery remain open. |
 | W20 | Browser host/bootstrap/auth | Complete boundary | Commit `4f0a6d7`; opt-in static host, CSP, non-secret bootstrap, Origin/Host/CSRF tests and reconnect helpers. |
 | W21 | Preview service | Complete local boundary | Commit `66c15dd`; bounded process lifecycle, worktree/artifact containment, stop/reap, isolated browser panel. Process-local/readiness/screenshot limitations remain. |
-| W22 | Resource/skill library | Partial fail-closed | Commit `4f0a6d7`; migration 0005, archive security, manifests, storage/core/routes. Install publication and edited-file-preserving update/remove remain intentionally incomplete. |
+| W22 | Resource/skill library | Partial fail-closed | Commits `4f0a6d7`, `a3ef67c`; migration 0005, archive security, manifests, transactional installed-hash replacement, rollback and edited-file-preserving removal. Update-over-existing-target and broker-enabled mutation remain fail-closed. |
 | W23 | Native credential backend | Blocked/fail-closed | No unaudited dependency added; W11 adapter remains unavailable. `cargo-audit`/`cargo-deny` and disposable native fixtures are required. |
 | W24 | Terminal/worker projections | Complete process-local boundary | Commit `66c15dd`; API leases/gaps, TUI terminal state, browser terminal/worker projections. Live attach orchestration and durable terminal registry remain open. |
 | W25 | Optional notifications | Complete disabled boundary | Commit `725775d`; migration 0006, sanitized outbox, pairing/revoke/status routes and UI. No live Telegram transport or credentials. |
@@ -84,7 +84,7 @@ The implementation is distributed across the following areas:
 ## Deviations
 
 - W19 added a tested core `execute_admitted` path and server assignment validation that use durable admission/attempt state, an explicit worktree adapter boundary and evidence settlement; absent adapters still fail closed.
-- W22 resource mutation remains fail-closed where central permission broker wiring and edited-file-preserving publication are not complete.
+- W22 resource mutation remains fail-closed where central permission broker wiring and update-over-existing-target semantics are not complete.
 - W23 did not add `keyring` because `cargo-audit` and `cargo-deny` are unavailable and native disposable credential fixtures are not approved. The existing unavailable adapter remains active.
 - W25 implements local sanitized notification metadata/outbox/pairing only; no Telegram dependency, credentials or live delivery was added.
 - W26 was limited to macOS/local and repository checks because Linux/Windows runners and release archive inputs were not available in this workspace.
@@ -128,6 +128,7 @@ The implementation is distributed across the following areas:
 
 - [ ] Add server-driven W19 assignment that constructs `WorkerExecutionInput` from durable lease state and a W08 worktree adapter.
 - [ ] Review W22 resource mutation safety before enabling install/update/remove.
+- [ ] Enable W22 mutation routes only after central broker wiring and explicit update conflict semantics pass review.
 - [ ] Provision `cargo-audit`/`cargo-deny` through the approved toolchain process.
 - [ ] Run native Linux/Windows CI qualification.
 - [ ] Run consented live Copilot smoke.

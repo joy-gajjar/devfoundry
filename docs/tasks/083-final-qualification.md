@@ -14,7 +14,7 @@ Record the final qualification of the completion campaign, separating passing lo
 - Rust workspace remains the authoritative local validation target.
 - Browser tests validate the optional workspace shell and projection boundaries.
 - W19 durable storage, explicit core `execute_admitted` execution, and server assignment/worktree adapter wiring are implemented; restart-safe external process recovery remains open.
-- W22 archive/resource security is implemented, but install publication and edited-file-preserving update/remove remain incomplete.
+- W22 archive/resource security, transactional installed-hash replacement, publication rollback, and edited-file-preserving removal are implemented; update-over-existing-target remains fail-closed.
 - W23 native credential enablement remains blocked because dependency audit tooling and disposable native credential fixtures are unavailable; the existing adapter fails closed.
 - W26 platform/release qualification remains open for native Linux/Windows runtime evidence, live Copilot smoke, and archive/checksum verification.
 
@@ -39,3 +39,5 @@ Record the final qualification of the completion campaign, separating passing lo
 - Run approved dependency audit and native credential smoke before enabling W23.
 - Use native Linux/Windows runners for process/PTTY/ConPTY and release evidence.
 - Provide release archive/checksum to `scripts/verify-release.sh` before release readiness.
+- Docker qualification was attempted: Docker CLI is installed, but the daemon is unavailable at `unix:///Users/joy/.docker/run/docker.sock`; no Linux container result is claimed.
+- `cargo-audit` and `cargo-deny` were attempted through Cargo and are not installed; W23 remains fail-closed.
