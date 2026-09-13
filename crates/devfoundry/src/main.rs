@@ -1,4 +1,5 @@
 mod config;
+mod credentials;
 mod runtime;
 mod update;
 

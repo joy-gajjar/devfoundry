@@ -654,6 +654,7 @@ dependencies = [
  "devfoundry-storage",
  "devfoundry-tools",
  "futures-util",
+ "serde",
  "serde_json",
  "sqlx",
  "tempfile",

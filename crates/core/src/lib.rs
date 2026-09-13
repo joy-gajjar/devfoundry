@@ -19,12 +19,16 @@ use tokio_util::sync::CancellationToken;
 
 mod context;
 mod scheduler;
+mod secret_bindings;
 mod tasks;
 mod workers;
 pub use context::ContextManifestBuilder;
 pub use scheduler::{
     Assignment, Blocker, DependencyReceipt, Scheduler, SchedulerError, SchedulerLimits,
     SchedulerTask, TaskAttemptState, dependency_readiness,
+};
+pub use secret_bindings::{
+    BindingScope, SecretBinding, SecretBindingError, SecretBindingRequest, SecretReference,
 };
 pub use tasks::TaskService;
 pub use workers::{EvidenceBundle, WorkerBrief, WorkerFailure, WorkerOutcome};
