@@ -7,7 +7,10 @@ use devfoundry_tools::{
 #[cfg(target_os = "macos")]
 use devfoundry_tools::{IntegrationCapability, IntegrationDescriptor, IntegrationKind};
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 
 fn fixture() -> PathBuf {
@@ -28,19 +31,31 @@ async fn lsp_fixture_process_and_diagnostics_are_local_and_bounded() {
     let source = root.path().join("main.rs");
     std::fs::write(&source, "fn main() {}\n").unwrap();
     let cancellation = CancellationToken::new();
-    let session = LspSession::start(
-        LspProcessConfig {
-            executable: fixture(),
-            arguments: vec!["lsp".into()],
-            workspace_root: root.path().to_path_buf(),
-        },
-        Arc::new(AllowAllPermissions),
-        cancellation.clone(),
+    let session = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        LspSession::start(
+            LspProcessConfig {
+                executable: fixture(),
+                arguments: vec!["lsp".into()],
+                workspace_root: root.path().to_path_buf(),
+            },
+            Arc::new(AllowAllPermissions),
+            cancellation.clone(),
+        ),
     )
     .await
+    .expect("LSP start timed out")
     .unwrap();
-    session
-        .publish_diagnostics(
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        session.document(Path::new("main.rs"), "fn main() {}\n", 1),
+    )
+    .await
+    .expect("document timed out")
+    .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        session.publish_diagnostics(
             Path::new("main.rs"),
             vec![LspDiagnostic {
                 path: source.canonicalize().unwrap(),
@@ -49,9 +64,11 @@ async fn lsp_fixture_process_and_diagnostics_are_local_and_bounded() {
                 severity: LspDiagnosticSeverity::Warning,
                 message: "local fixture warning".into(),
             }],
-        )
-        .await
-        .unwrap();
+        ),
+    )
+    .await
+    .expect("publish timed out")
+    .unwrap();
     assert_eq!(session.diagnostics().await.len(), 1);
     cancellation.cancel();
     tokio::time::timeout(std::time::Duration::from_secs(2), session.shutdown())
@@ -151,4 +168,65 @@ async fn mcp_fixture_completes_initialize_and_tool_call_over_stdio() {
     assert!(!result.is_error);
     assert_eq!(result.content[0]["text"], "local fixture");
     client.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn mcp_fixture_uses_newline_json_and_rejects_content_length() {
+    let mut child = Command::new(fixture())
+        .arg("mcp")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    stdin
+        .write_all(br#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#)
+        .await
+        .unwrap();
+    stdin.write_all(b"\n").await.unwrap();
+    stdin.flush().await.unwrap();
+    let mut line = String::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        stdout.read_line(&mut line),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let response: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(response["id"], 1);
+    assert!(response["result"]["capabilities"]["tools"].is_object());
+    child.kill().await.unwrap();
+}
+
+#[tokio::test]
+async fn lsp_fixture_performs_initialize_and_publishes_diagnostics() {
+    let mut child = Command::new(fixture())
+        .arg("lsp")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+    let request = serde_json::to_vec(&serde_json::json!({
+        "jsonrpc":"2.0", "id":1, "method":"initialize", "params":{}
+    }))
+    .unwrap();
+    stdin
+        .write_all(format!("Content-Length: {}\r\n\r\n", request.len()).as_bytes())
+        .await
+        .unwrap();
+    stdin.write_all(&request).await.unwrap();
+    stdin.flush().await.unwrap();
+    let mut header = Vec::new();
+    let mut byte = [0_u8; 1];
+    while !header.ends_with(b"\r\n\r\n") {
+        stdout.read_exact(&mut byte).await.unwrap();
+        header.push(byte[0]);
+        assert!(header.len() < 8192);
+    }
+    assert!(String::from_utf8_lossy(&header).contains("Content-Length:"));
+    child.kill().await.unwrap();
 }

@@ -21,7 +21,6 @@ const MAX_FRAME_BYTES: usize = 256 * 1024;
 const MAX_NAME_BYTES: usize = 128;
 const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-const MAX_HEADER_BYTES: usize = 8 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct McpServerConfig {
@@ -69,6 +68,7 @@ pub struct McpClient {
     permissions: Arc<dyn PermissionBroker>,
     next_id: u64,
     server_name: String,
+    desynchronized: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -141,6 +141,7 @@ impl McpClient {
             permissions,
             next_id: 1,
             server_name: config.descriptor.name,
+            desynchronized: false,
         };
         if let Err(error) = client.initialize().await {
             client.kill().await;
@@ -170,6 +171,27 @@ impl McpClient {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
         })
+    }
+
+    pub async fn list_tools(&mut self, cursor: Option<&str>) -> Result<Vec<Value>, McpError> {
+        let params = cursor.map_or_else(|| json!({}), |value| json!({"cursor": value}));
+        let response = self.request("tools/list", params).await?;
+        let tools = response
+            .get("tools")
+            .and_then(Value::as_array)
+            .ok_or_else(|| McpError::Protocol("tools/list omitted tools array".into()))?;
+        if tools.len() > 256 {
+            return Err(McpError::Protocol("tools/list page exceeds limit".into()));
+        }
+        if tools.iter().any(|tool| {
+            tool.get("name").and_then(Value::as_str).is_none()
+                || !tool.get("inputSchema").is_some_and(Value::is_object)
+        }) {
+            return Err(McpError::Protocol(
+                "tools/list returned invalid tool".into(),
+            ));
+        }
+        Ok(tools.clone())
     }
 
     pub async fn shutdown(mut self) -> Result<(), McpError> {
@@ -218,9 +240,12 @@ impl McpClient {
         params: Value,
         timeout: Duration,
     ) -> Result<Value, McpError> {
+        if self.desynchronized {
+            return Err(McpError::Protocol("MCP session is desynchronized".into()));
+        }
         let id = self.next_id;
         self.next_id += 1;
-        tokio::time::timeout(timeout, async {
+        let result = tokio::time::timeout(timeout, async {
             write_frame(
                 &mut self.stdin,
                 &json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}),
@@ -229,7 +254,11 @@ impl McpClient {
             read_response(&mut self.stdout, id).await
         })
         .await
-        .map_err(|_| McpError::Timeout)?
+        .map_err(|_| McpError::Timeout)?;
+        if result.is_err() {
+            self.desynchronized = true;
+        }
+        result
     }
 
     async fn notify(&mut self, method: &str, params: Value) -> Result<(), McpError> {
@@ -273,6 +302,11 @@ fn validate_text(value: &str, max_bytes: usize) -> Result<(), McpError> {
 }
 
 fn validate_server_capabilities(result: &Value) -> Result<(), McpError> {
+    if let Some(version) = result.get("protocolVersion") {
+        if version.as_str() != Some(MCP_PROTOCOL_VERSION) {
+            return Err(McpError::Protocol("MCP protocol version mismatch".into()));
+        }
+    }
     let tools = result
         .get("capabilities")
         .and_then(|value| value.get("tools"));
@@ -289,51 +323,32 @@ async fn write_frame<W: AsyncWrite + Unpin>(writer: &mut W, value: &Value) -> Re
     if body.len() > MAX_FRAME_BYTES {
         return Err(McpError::Protocol("MCP request exceeds frame limit".into()));
     }
-    writer
-        .write_all(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes())
-        .await
-        .map_err(io_error)?;
     writer.write_all(&body).await.map_err(io_error)?;
+    writer.write_all(b"\n").await.map_err(io_error)?;
     writer.flush().await.map_err(io_error)?;
     Ok(())
 }
 
 async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Value, McpError> {
-    let mut headers = Vec::new();
+    let mut body = Vec::new();
     loop {
         let byte = read_byte(reader).await?;
-        headers.push(byte);
-        if headers.ends_with(b"\r\n\r\n") {
+        if byte == b'\n' {
             break;
         }
-        if headers.len() > MAX_HEADER_BYTES {
-            return Err(McpError::Protocol("MCP headers exceed limit".into()));
+        body.push(byte);
+        if body.len() > MAX_FRAME_BYTES {
+            return Err(McpError::Protocol("MCP message exceeds frame limit".into()));
         }
     }
-    let headers = String::from_utf8(headers)
-        .map_err(|_| McpError::Protocol("MCP headers are not UTF-8".into()))?;
-    let mut length = None;
-    for line in headers.lines() {
-        if let Some(value) = line.strip_prefix("Content-Length:") {
-            if length.is_some() {
-                return Err(McpError::Protocol(
-                    "MCP response contains duplicate Content-Length".into(),
-                ));
-            }
-            length = Some(value.trim().parse::<usize>().map_err(|_| {
-                McpError::Protocol("MCP response has invalid Content-Length".into())
-            })?);
-        }
-    }
-    let length =
-        length.ok_or_else(|| McpError::Protocol("MCP response omitted Content-Length".into()))?;
-    if length > MAX_FRAME_BYTES {
+    if body.starts_with(b"Content-Length:") {
         return Err(McpError::Protocol(
-            "MCP response exceeds frame limit".into(),
+            "MCP requires newline-delimited JSON".into(),
         ));
     }
-    let mut body = vec![0; length];
-    reader.read_exact(&mut body).await.map_err(io_error)?;
+    while body.last().is_some_and(|byte| byte.is_ascii_whitespace()) {
+        body.pop();
+    }
     serde_json::from_slice(&body).map_err(|error| McpError::Protocol(error.to_string()))
 }
 
@@ -440,7 +455,12 @@ mod tests {
 
     #[test]
     fn server_must_advertise_tools_as_an_object() {
-        assert!(validate_server_capabilities(&json!({"capabilities": {"tools": {}}})).is_ok());
+        assert!(
+            validate_server_capabilities(
+                &json!({"protocolVersion": MCP_PROTOCOL_VERSION, "capabilities": {"tools": {}}})
+            )
+            .is_ok()
+        );
         assert!(matches!(
             validate_server_capabilities(&json!({"capabilities": {}})),
             Err(McpError::Protocol(message)) if message.contains("tools capability")
@@ -451,50 +471,91 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn server_protocol_version_must_match() {
+        assert!(
+            validate_server_capabilities(&json!({
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": {"tools": {}}
+            }))
+            .is_ok()
+        );
+        assert!(matches!(validate_server_capabilities(&json!({
+            "protocolVersion": "old", "capabilities": {"tools": {}}
+        })), Err(McpError::Protocol(message)) if message.contains("version")));
+    }
+
     #[tokio::test]
     async fn frames_are_content_length_bounded() {
-        let (mut writer, mut reader) = duplex(4096);
+        let (mut writer, mut reader) = duplex(512 * 1024);
         let value = json!({"jsonrpc": "2.0", "id": 1, "result": {"ok": true}});
         write_frame(&mut writer, &value).await.unwrap();
         assert_eq!(read_frame(&mut reader).await.unwrap(), value);
     }
 
     #[tokio::test]
-    async fn oversized_response_is_rejected_before_allocation() {
-        let (mut writer, mut reader) = duplex(4096);
+    async fn writes_newline_delimited_json_without_content_length_headers() {
+        let mut writer = Vec::new();
+        let value = json!({"jsonrpc": "2.0", "id": 1, "result": {"ok": true}});
+        write_frame(&mut writer, &value).await.unwrap();
+        let bytes = writer;
+        assert_eq!(bytes.last(), Some(&b'\n'));
+        assert!(!bytes.starts_with(b"Content-Length:"));
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes[..bytes.len() - 1]).unwrap(),
+            value
+        );
+    }
+
+    #[tokio::test]
+    async fn reads_newline_delimited_json_and_rejects_content_length() {
+        let mut input = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n".as_slice();
+        assert_eq!(
+            read_frame(&mut input).await.unwrap(),
+            json!({"jsonrpc":"2.0","id":1,"result":{}})
+        );
+
+        let mut legacy = b"Content-Length: 2\r\n\r\n{}".as_slice();
+        assert!(
+            matches!(read_frame(&mut legacy).await, Err(McpError::Protocol(message)) if message.contains("newline"))
+        );
+    }
+
+    #[tokio::test]
+    async fn oversized_newline_response_is_rejected_before_allocation() {
+        let (mut writer, mut reader) = duplex(512 * 1024);
         writer
-            .write_all(b"Content-Length: 262145\r\n\r\n")
+            .write_all(&vec![b'x'; MAX_FRAME_BYTES + 1])
             .await
             .unwrap();
+        writer.write_all(b"\n").await.unwrap();
         assert!(
             matches!(read_frame(&mut reader).await, Err(McpError::Protocol(message)) if message.contains("frame limit"))
         );
     }
 
     #[tokio::test]
-    async fn malformed_content_length_is_rejected() {
-        let (mut writer, mut reader) = duplex(4096);
+    async fn content_length_is_rejected_as_legacy_framing() {
+        let (mut writer, mut reader) = duplex(512 * 1024);
         writer
             .write_all(b"Content-Length: nope\r\n\r\n")
             .await
             .unwrap();
-        assert!(matches!(
-            read_frame(&mut reader).await,
-            Err(McpError::Protocol(message)) if message.contains("invalid Content-Length")
-        ));
+        assert!(
+            matches!(read_frame(&mut reader).await, Err(McpError::Protocol(message)) if message.contains("newline"))
+        );
     }
 
     #[tokio::test]
-    async fn duplicate_content_length_is_rejected() {
+    async fn duplicate_content_length_is_rejected_as_legacy_framing() {
         let (mut writer, mut reader) = duplex(4096);
         writer
             .write_all(b"Content-Length: 0\r\nContent-Length: 0\r\n\r\n")
             .await
             .unwrap();
-        assert!(matches!(
-            read_frame(&mut reader).await,
-            Err(McpError::Protocol(message)) if message.contains("duplicate Content-Length")
-        ));
+        assert!(
+            matches!(read_frame(&mut reader).await, Err(McpError::Protocol(message)) if message.contains("newline"))
+        );
     }
 
     #[tokio::test]

@@ -10,12 +10,14 @@ use crate::{
     PermissionDecision,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, Command};
+use tokio::process::{ChildStdin, ChildStdout};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
@@ -118,6 +120,132 @@ pub enum LspError {
     InvalidDiagnostics,
 }
 
+async fn lsp_notify(
+    stdin: &Arc<Mutex<ChildStdin>>,
+    method: &str,
+    params: Value,
+) -> Result<(), LspError> {
+    let body =
+        serde_json::to_vec(&serde_json::json!({"jsonrpc":"2.0","method":method,"params":params}))
+            .map_err(|error| LspError::InvalidConfig(error.to_string()))?;
+    if body.len() > MAX_LSP_MESSAGE_BYTES {
+        return Err(LspError::InvalidDiagnostics);
+    }
+    let mut stdin = stdin.lock().await;
+    stdin
+        .write_all(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes())
+        .await
+        .map_err(LspError::Process)?;
+    stdin.write_all(&body).await.map_err(LspError::Process)?;
+    stdin.flush().await.map_err(LspError::Process)
+}
+
+async fn lsp_request(
+    stdin: &Arc<Mutex<ChildStdin>>,
+    stdout: &Arc<Mutex<ChildStdout>>,
+    id: u64,
+    method: &str,
+    params: Value,
+) -> Result<Value, LspError> {
+    let body = serde_json::to_vec(&serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": method,
+        "params": params,
+    }))
+    .map_err(|error| LspError::InvalidConfig(error.to_string()))?;
+    if body.len() > MAX_LSP_MESSAGE_BYTES {
+        return Err(LspError::InvalidDiagnostics);
+    }
+    let mut stdin = stdin.lock().await;
+    stdin
+        .write_all(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes())
+        .await
+        .map_err(LspError::Process)?;
+    stdin.write_all(&body).await.map_err(LspError::Process)?;
+    stdin.flush().await.map_err(LspError::Process)?;
+    drop(stdin);
+    let mut stdout = stdout.lock().await;
+    let mut headers = Vec::new();
+    let mut byte = [0_u8; 1];
+    loop {
+        stdout
+            .read_exact(&mut byte)
+            .await
+            .map_err(LspError::Process)?;
+        headers.push(byte[0]);
+        if headers.ends_with(b"\r\n\r\n") {
+            break;
+        }
+        if headers.len() > 8 * 1024 {
+            return Err(LspError::InvalidDiagnostics);
+        }
+    }
+    let header = String::from_utf8(headers.clone()).map_err(|_| LspError::InvalidDiagnostics)?;
+    let length = header
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("Content-Length:")?
+                .trim()
+                .parse::<usize>()
+                .ok()
+        })
+        .ok_or(LspError::InvalidDiagnostics)?;
+    if length > MAX_LSP_MESSAGE_BYTES {
+        return Err(LspError::InvalidDiagnostics);
+    }
+    let mut body = vec![0; length];
+    stdout
+        .read_exact(&mut body)
+        .await
+        .map_err(LspError::Process)?;
+    let mut value: Value =
+        serde_json::from_slice(&body).map_err(|_| LspError::InvalidDiagnostics)?;
+    while value.get("id").is_none() {
+        headers.clear();
+        loop {
+            stdout
+                .read_exact(&mut byte)
+                .await
+                .map_err(LspError::Process)?;
+            headers.push(byte[0]);
+            if headers.ends_with(b"\r\n\r\n") {
+                break;
+            }
+            if headers.len() > 8 * 1024 {
+                return Err(LspError::InvalidDiagnostics);
+            }
+        }
+        let header =
+            String::from_utf8(headers.clone()).map_err(|_| LspError::InvalidDiagnostics)?;
+        let length = header
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("Content-Length:")?
+                    .trim()
+                    .parse::<usize>()
+                    .ok()
+            })
+            .ok_or(LspError::InvalidDiagnostics)?;
+        if length > MAX_LSP_MESSAGE_BYTES {
+            return Err(LspError::InvalidDiagnostics);
+        }
+        let mut next = vec![0; length];
+        stdout
+            .read_exact(&mut next)
+            .await
+            .map_err(LspError::Process)?;
+        value = serde_json::from_slice(&next).map_err(|_| LspError::InvalidDiagnostics)?;
+    }
+    if value.get("id") != Some(&Value::from(id)) {
+        return Err(LspError::InvalidDiagnostics);
+    }
+    if let Some(error) = value.get("error") {
+        return Err(LspError::InvalidConfig(error.to_string()));
+    }
+    Ok(value.get("result").cloned().unwrap_or(Value::Null))
+}
+
 async fn drain_bounded<R: AsyncRead + Unpin>(reader: R) -> std::io::Result<()> {
     let mut reader = reader;
     let mut buffer = [0_u8; 8 * 1024];
@@ -155,6 +283,9 @@ pub struct LspSession {
     cancellation_task: Option<tokio::task::JoinHandle<()>>,
     output_tasks: Vec<tokio::task::JoinHandle<()>>,
     workspace_root: PathBuf,
+    stdin: Arc<Mutex<ChildStdin>>,
+    stdout: Arc<Mutex<ChildStdout>>,
+    next_id: Arc<Mutex<u64>>,
 }
 
 impl LspSession {
@@ -205,14 +336,22 @@ impl LspSession {
             .stderr
             .take()
             .ok_or_else(|| LspError::Process(std::io::Error::other("missing LSP stderr")))?;
-        let output_tasks = vec![
-            tokio::spawn(async move {
-                let _ = drain_bounded(stdout).await;
-            }),
-            tokio::spawn(async move {
-                let _ = drain_bounded(stderr).await;
-            }),
-        ];
+        let output_tasks = vec![tokio::spawn(async move {
+            let _ = drain_bounded(stderr).await;
+        })];
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| LspError::Process(std::io::Error::other("missing LSP stdin")))?;
+        let stdout = Arc::new(Mutex::new(stdout));
+        let stdin = Arc::new(Mutex::new(stdin));
+        if !config.arguments.is_empty() {
+            lsp_request(&stdin, &stdout, 1, "initialize", serde_json::json!({
+                "processId": std::process::id(), "rootUri": workspace_root.to_string_lossy(),
+                "capabilities": {}, "clientInfo": {"name": "devfoundry", "version": env!("CARGO_PKG_VERSION")}
+            })).await?;
+            lsp_notify(&stdin, "initialized", serde_json::json!({})).await?;
+        }
         let child = Arc::new(Mutex::new(Some(child)));
         let watcher_child = Arc::clone(&child);
         let watcher_token = cancellation.clone();
@@ -221,7 +360,6 @@ impl LspSession {
             let mut child = watcher_child.lock().await;
             if let Some(child) = child.as_mut() {
                 let _ = terminate_process_group(child).await;
-                let _ = child.wait().await;
             }
         });
         Ok(Self {
@@ -231,6 +369,9 @@ impl LspSession {
             cancellation_task: Some(cancellation_task),
             output_tasks,
             workspace_root,
+            stdin,
+            stdout,
+            next_id: Arc::new(Mutex::new(2)),
         })
     }
 
@@ -261,21 +402,64 @@ impl LspSession {
         self.diagnostics.lock().await.clone()
     }
 
+    pub async fn document(&self, path: &Path, text: &str, version: i32) -> Result<(), LspError> {
+        if text.len() > MAX_LSP_OUTPUT_BYTES {
+            return Err(LspError::InvalidDiagnostics);
+        }
+        let path = self.validate_workspace_path(path)?;
+        let uri = format!("file://{}", path.display());
+        let id = {
+            let mut id = self.next_id.lock().await;
+            let current = *id;
+            *id += 1;
+            current
+        };
+        let result = lsp_request(
+            &self.stdin,
+            &self.stdout,
+            id,
+            "textDocument/diagnostic",
+            serde_json::json!({
+                "textDocument": {"uri": uri, "version": version, "text": text}
+            }),
+        )
+        .await?;
+        if result.get("items").and_then(Value::as_array).is_none() {
+            return Err(LspError::InvalidDiagnostics);
+        }
+        Ok(())
+    }
+
     pub async fn shutdown(mut self) -> Result<(), LspError> {
+        if !self.cancellation.is_cancelled() {
+            let id = {
+                let mut id = self.next_id.lock().await;
+                let current = *id;
+                *id += 1;
+                current
+            };
+            let _ = lsp_request(
+                &self.stdin,
+                &self.stdout,
+                id,
+                "shutdown",
+                serde_json::Value::Null,
+            )
+            .await;
+            let _ = lsp_notify(&self.stdin, "exit", serde_json::json!({})).await;
+        }
         self.cancellation.cancel();
         if let Some(task) = self.cancellation_task.take() {
-            let _ = task.await;
+            task.abort();
         }
         let mut child = self.child.lock().await;
         if let Some(child) = child.as_mut() {
-            terminate_process_group(child)
-                .await
-                .map_err(LspError::Process)?;
-            child.wait().await.map_err(LspError::Process)?;
+            let _ = terminate_process_group(child).await;
+            let _ = child.kill().await;
         }
         child.take();
         for task in self.output_tasks.drain(..) {
-            let _ = task.await;
+            task.abort();
         }
         Ok(())
     }
