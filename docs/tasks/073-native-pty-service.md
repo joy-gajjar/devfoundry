@@ -81,6 +81,12 @@ TOCTOU risk against a hostile concurrent filesystem actor.
   7 passed, 0 failed.
 - Final workspace gates:
   workspace check, workspace Clippy with `-D warnings`, workspace tests, formatting, and `git diff --check` all passed.
+- Final regression fix: the native PTY reader previously held the async file
+  mutex while blocking on a PTY read, starving input/close operations. The
+  reader now owns a cloned descriptor and input writes run through a blocking
+  task on a cloned descriptor; child reaping is bounded and nonblocking.
+  The isolated regression and all 8 terminal lifecycle tests pass after this
+  fix.
 - `git diff --check` for the four approved W13 paths: passed.
 - Workspace-wide `cargo check`, workspace-wide tests, and Windows runtime
   validation were not claimed as passing in this macOS run.

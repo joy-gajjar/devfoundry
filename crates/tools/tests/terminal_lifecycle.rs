@@ -37,23 +37,33 @@ async fn native_pty_reports_native_capability_without_pipe_substitution() {
 #[tokio::test]
 async fn native_pty_open_input_and_output_preserve_terminal_bytes() {
     let root = tempfile::tempdir().unwrap();
-    let service = NativePtyService::open(
-        shell_request("read line; printf 'reply:%s\\n' \"$line\""),
-        context(root.path(), Arc::new(AllowAllPermissions)),
+    let service = tokio::time::timeout(
+        Duration::from_secs(2),
+        NativePtyService::open(
+            shell_request("read line; printf 'reply:%s\\n' \"$line\""),
+            context(root.path(), Arc::new(AllowAllPermissions)),
+        ),
     )
     .await
+    .expect("open timed out")
     .unwrap();
-    service
-        .input(PtyInput::new(service.input_lease(), b"hello\n".to_vec()))
-        .await
-        .unwrap();
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        service.input(PtyInput::new(service.input_lease(), b"hello\n".to_vec())),
+    )
+    .await
+    .expect("input timed out")
+    .unwrap();
     let mut offset = 0;
     let mut collected = Vec::new();
     for _ in 0..3 {
-        let output = service
-            .read_output(offset, Duration::from_secs(2))
-            .await
-            .unwrap();
+        let output = tokio::time::timeout(
+            Duration::from_secs(3),
+            service.read_output(offset, Duration::from_secs(2)),
+        )
+        .await
+        .expect("read timed out")
+        .unwrap();
         collected.extend_from_slice(&output.bytes);
         offset = output.next_offset;
         if collected.windows(11).any(|window| window == b"reply:hello") {
@@ -61,7 +71,10 @@ async fn native_pty_open_input_and_output_preserve_terminal_bytes() {
         }
     }
     assert!(collected.windows(11).any(|window| window == b"reply:hello"));
-    service.close().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(3), service.close())
+        .await
+        .expect("close timed out")
+        .unwrap();
 }
 
 #[tokio::test]

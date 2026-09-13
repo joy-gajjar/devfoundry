@@ -153,7 +153,12 @@ mod unix {
                 closed: false,
             }));
             let notify = Arc::new(Notify::new());
-            start_reader(Arc::clone(&master), Arc::clone(&state), Arc::clone(&notify));
+            let reader = master
+                .lock()
+                .await
+                .try_clone()
+                .map_err(|error| NativePtyError::Io(error.to_string()))?;
+            start_reader(reader, Arc::clone(&state), Arc::clone(&notify));
             let closed = Arc::new(Mutex::new(false));
             Ok(Self {
                 master,
@@ -180,10 +185,20 @@ mod unix {
             if input.bytes.len() > MAX_PTY_INPUT_BYTES {
                 return Err(NativePtyError::InputTooLarge);
             }
-            let mut master = self.master.lock().await;
-            master
-                .write_all(&input.bytes)
-                .map_err(|error| NativePtyError::Io(error.to_string()))
+            let mut master = self
+                .master
+                .lock()
+                .await
+                .try_clone()
+                .map_err(|error| NativePtyError::Io(error.to_string()))?;
+            let bytes = input.bytes;
+            tokio::task::spawn_blocking(move || {
+                master
+                    .write_all(&bytes)
+                    .map_err(|error| NativePtyError::Io(error.to_string()))
+            })
+            .await
+            .map_err(|error| NativePtyError::Io(error.to_string()))?
         }
 
         pub async fn resize(&self, resize: PtyResize) -> Result<(), NativePtyError> {
@@ -233,13 +248,7 @@ mod unix {
             }
             *closed = true;
             terminate_pid(self.pid);
-            let mut status = 0;
-            let result = unsafe { libc::waitpid(self.pid, &mut status, 0) };
-            if result < 0 {
-                return Err(NativePtyError::Io(
-                    std::io::Error::last_os_error().to_string(),
-                ));
-            }
+            reap_child(self.pid).await?;
             let mut state = self.state.lock().await;
             state.closed = true;
             self.notify.notify_waiters();
@@ -252,7 +261,7 @@ mod unix {
             if let Ok(closed) = self.closed.try_lock() {
                 if !*closed {
                     terminate_pid(self.pid);
-                    unsafe { libc::waitpid(self.pid, std::ptr::null_mut(), 0) };
+                    unsafe { libc::waitpid(self.pid, std::ptr::null_mut(), libc::WNOHANG) };
                 }
             }
         }
@@ -345,18 +354,35 @@ mod unix {
         }
     }
 
-    fn start_reader(
-        master: Arc<Mutex<std::fs::File>>,
-        state: Arc<Mutex<State>>,
-        notify: Arc<Notify>,
-    ) {
+    async fn reap_child(pid: libc::pid_t) -> Result<(), NativePtyError> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let mut status = 0;
+            let result = unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+            if result == pid {
+                return Ok(());
+            }
+            if result < 0 {
+                let error = std::io::Error::last_os_error();
+                if error.raw_os_error() == Some(libc::ECHILD) {
+                    return Ok(());
+                }
+                return Err(NativePtyError::Io(error.to_string()));
+            }
+            if tokio::time::Instant::now() >= deadline {
+                terminate_pid(pid);
+                unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) };
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    fn start_reader(mut master: std::fs::File, state: Arc<Mutex<State>>, notify: Arc<Notify>) {
         thread::spawn(move || {
             let mut buffer = [0_u8; 8192];
             loop {
-                let count = {
-                    let mut file = master.blocking_lock();
-                    file.read(&mut buffer)
-                };
+                let count = master.read(&mut buffer);
                 match count {
                     Ok(0) | Err(_) => {
                         state.blocking_lock().closed = true;
