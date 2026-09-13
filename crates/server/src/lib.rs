@@ -33,7 +33,7 @@ mod routes_resources;
 mod routes_terminals;
 mod routes_v2;
 mod routes_w10;
-mod routes_workers;
+pub mod routes_workers;
 pub mod w10;
 
 pub use browser::BrowserConfig;
@@ -46,6 +46,7 @@ pub struct ServerState {
     pub previews: Arc<Mutex<PreviewRegistry>>,
     pub preview_permissions: Arc<dyn devfoundry_tools::PermissionBroker>,
     pub terminals: Arc<Mutex<routes_terminals::TerminalRegistry>>,
+    pub workers: Arc<routes_workers::WorkerRegistry>,
 }
 
 #[derive(Clone, Debug, Default)]

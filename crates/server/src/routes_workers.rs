@@ -14,6 +14,8 @@ use devfoundry_tools::{WorktreeManager, WorktreeRequest};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Deserialize)]
@@ -30,6 +32,33 @@ pub(crate) struct AssignmentResponse {
     revision: Revision,
     status: &'static str,
     execution: &'static str,
+}
+
+#[derive(Default)]
+pub struct WorkerRegistry {
+    tasks: Mutex<std::collections::HashMap<AttemptId, CancellationToken>>,
+    handles: Mutex<std::collections::HashMap<AttemptId, JoinHandle<()>>>,
+}
+
+impl WorkerRegistry {
+    pub async fn insert(
+        &self,
+        attempt_id: AttemptId,
+        handle: JoinHandle<()>,
+        token: CancellationToken,
+    ) {
+        self.tasks.lock().await.insert(attempt_id, token);
+        self.handles.lock().await.insert(attempt_id, handle);
+    }
+
+    pub async fn cancel(&self, attempt_id: AttemptId) -> bool {
+        if let Some(token) = self.tasks.lock().await.get(&attempt_id).cloned() {
+            token.cancel();
+            true
+        } else {
+            false
+        }
+    }
 }
 
 struct ServerWorktreeAdapter {
@@ -198,12 +227,18 @@ pub(crate) async fn assign(
     };
     let runner = state.runner.clone();
     let store = state.store.clone();
-    tokio::spawn(async move {
-        let host = WorkerHost::new(store);
+    let worker_token = CancellationToken::new();
+    let worker_token_for_task = worker_token.clone();
+    let handle = tokio::spawn(async move {
+        let host = WorkerHost::with_cancellation(store, worker_token_for_task.clone());
+        if worker_token_for_task.is_cancelled() {
+            return;
+        }
         let _ = host
             .execute_admitted(&runner, &adapter, input, "github-copilot")
             .await;
     });
+    state.workers.insert(attempt_id, handle, worker_token).await;
     Ok((
         StatusCode::ACCEPTED,
         Json(AssignmentResponse {
@@ -227,6 +262,11 @@ pub(crate) async fn cancel(
             "attempt id is invalid",
         )
     })?;
+    if state.workers.cancel(attempt_id).await {
+        return Ok(Json(
+            serde_json::json!({"attempt_id": attempt_id, "status": "cancellation_requested"}),
+        ));
+    }
     let attempts = state
         .store
         .list_recoverable_workers()

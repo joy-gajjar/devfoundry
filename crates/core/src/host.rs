@@ -32,9 +32,13 @@ pub trait WorkerWorktree: Send + Sync {
 
 impl<R: SchedulerRepository> WorkerHost<R> {
     pub fn new(repository: Arc<R>) -> Self {
+        Self::with_cancellation(repository, CancellationToken::new())
+    }
+
+    pub fn with_cancellation(repository: Arc<R>, cancellation: CancellationToken) -> Self {
         Self {
             repository,
-            cancellation: CancellationToken::new(),
+            cancellation,
         }
     }
 

@@ -13,7 +13,7 @@ Record the final qualification of the completion campaign, separating passing lo
 
 - Rust workspace remains the authoritative local validation target.
 - Browser tests validate the optional workspace shell and projection boundaries.
-- W19 durable storage, explicit core `execute_admitted` execution, and server assignment/worktree adapter wiring are implemented; restart-safe external process recovery remains open.
+- W19 durable storage, explicit core `execute_admitted` execution, supervised cancellation registry, and server assignment/worktree adapter wiring are implemented; restart-safe external process recovery remains open.
 - W22 archive/resource security, transactional installed-hash replacement, publication rollback, and edited-file-preserving removal are implemented; update-over-existing-target remains fail-closed.
 - W23 native credential enablement remains blocked because dependency audit tooling and disposable native credential fixtures are unavailable; the existing adapter fails closed.
 - W26 platform/release qualification remains open for native Linux/Windows runtime evidence, live Copilot smoke, and archive/checksum verification.

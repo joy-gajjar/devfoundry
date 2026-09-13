@@ -81,6 +81,9 @@ async fn fixture_with_security(
             )),
             preview_permissions: std::sync::Arc::new(devfoundry_tools::AllowAllPermissions),
             terminals: std::sync::Arc::new(tokio::sync::Mutex::new(Default::default())),
+            workers: std::sync::Arc::new(
+                devfoundry_server::routes_workers::WorkerRegistry::default(),
+            ),
         },
         security,
     );
