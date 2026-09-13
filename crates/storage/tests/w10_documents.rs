@@ -35,3 +35,51 @@ async fn document_index_builds_backlinks_and_rejects_symlink_escape() {
     #[cfg(unix)]
     assert!(store.rebuild_documents(project.id).await.is_err());
 }
+
+#[tokio::test]
+async fn resource_file_metadata_replacement_is_transactional() {
+    let directory = tempfile::tempdir().unwrap();
+    let store = SqliteStore::connect_path(directory.path().join("resource.db"))
+        .await
+        .unwrap();
+    let now = Utc::now();
+    let project_id = ProjectId::new();
+    store
+        .create_project(Project {
+            id: project_id,
+            root: directory.path().to_string_lossy().into(),
+            name: "resource".into(),
+            created_at: now,
+            updated_at: now,
+        })
+        .await
+        .unwrap();
+    let manifest = devfoundry_schema::ResourceManifest {
+        id: "resource-a".into(),
+        version: "1.0.0".into(),
+        source: "fixture".into(),
+        manifest_hash: "manifest".into(),
+        files: vec![],
+        required_capabilities: vec![],
+    };
+    let files = vec![devfoundry_schema::InstalledResourceFile {
+        resource_id: manifest.id.clone(),
+        project_id,
+        target: "README.md".into(),
+        expected_hash: "expected".into(),
+        installed_hash: "installed".into(),
+        size: 10,
+    }];
+    store
+        .replace_resource_files(&manifest.id, project_id, &manifest, &files)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .list_resource_files(&manifest.id, project_id)
+            .await
+            .unwrap()[0]
+            .installed_hash,
+        "installed"
+    );
+}

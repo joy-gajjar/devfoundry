@@ -93,9 +93,9 @@ impl ResourceService {
                 size: entry.size,
             })
             .collect::<Vec<_>>();
-        let result = self.store.save_resource(project_id, manifest).await?;
-        self.store
-            .mark_resource_files_installed(&manifest.id, project_id, &files)
+        let result = self
+            .store
+            .replace_resource_files(&manifest.id, project_id, manifest, &files)
             .await?;
         std::fs::remove_dir_all(&stage).ok();
         Ok(result)

@@ -35,6 +35,58 @@ impl SqliteStore {
         Ok(resource)
     }
 
+    pub async fn replace_resource_files(
+        &self,
+        resource_id: &str,
+        project_id: ProjectId,
+        manifest: &ResourceManifest,
+        files: &[InstalledResourceFile],
+    ) -> StorageResult<InstalledResource> {
+        let now = chrono::Utc::now();
+        let mut tx = self.pool().begin().await?;
+        sqlx::query("DELETE FROM resource_files WHERE resource_id = ? AND project_id = ?")
+            .bind(resource_id)
+            .bind(project_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM resources WHERE id = ? AND project_id = ?")
+            .bind(resource_id)
+            .bind(project_id.to_string())
+            .execute(&mut *tx)
+            .await?;
+        let resource = InstalledResource {
+            id: resource_id.into(),
+            project_id,
+            version: manifest.version.clone(),
+            revision: Revision(0),
+            manifest_hash: manifest.manifest_hash.clone(),
+        };
+        sqlx::query("INSERT INTO resources (id, project_id, version, source, manifest_hash, required_capabilities, revision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)")
+            .bind(&resource.id)
+            .bind(project_id.to_string())
+            .bind(&resource.version)
+            .bind(&manifest.source)
+            .bind(&resource.manifest_hash)
+            .bind(serde_json::to_string(&manifest.required_capabilities).unwrap_or_else(|_| "[]".into()))
+            .bind(now)
+            .bind(now)
+            .execute(&mut *tx)
+            .await?;
+        for file in files {
+            sqlx::query("INSERT INTO resource_files (resource_id, project_id, target, expected_hash, installed_hash, size) VALUES (?, ?, ?, ?, ?, ?)")
+                .bind(&resource.id)
+                .bind(project_id.to_string())
+                .bind(&file.target)
+                .bind(&file.expected_hash)
+                .bind(&file.installed_hash)
+                .bind(file.size as i64)
+                .execute(&mut *tx)
+                .await?;
+        }
+        tx.commit().await?;
+        Ok(resource)
+    }
+
     pub async fn mark_resource_files_installed(
         &self,
         resource_id: &str,

@@ -12,8 +12,8 @@ Provide a project-scoped resource/skill manifest boundary that can inspect and p
 - Archive inputs fail closed on traversal, absolute paths, links/special files, duplicate targets, malformed paths, and bounded file/count/expanded-size limits.
 - SHA-256 content hashes are used for manifest/content comparison.
 - The core service receives a `PermissionBroker`; it never self-approves. HTTP mutation routes currently fail closed because this branch has no resource broker wired into `ServerState`.
-- Installation stages bounded files and rejects target conflicts. Existing legacy migrations are unchanged.
-- Removal intentionally remains blocked until the persisted installed-file projection supports edited-file-preserving deletion; this is safer than deleting or overwriting user edits.
+- Installation stages bounded files, publishes with rollback of already-published targets on failure, and records installed hashes in one replacement transaction. Existing legacy migrations are unchanged.
+- Removal compares current hashes to persisted installed hashes, deletes only unchanged files, and returns edited-file conflicts without deleting user edits. Update still refuses to overwrite existing targets unless a future explicit revision/update flow is added.
 
 ## Implementation
 - `migrations/0005_resources.sql`
@@ -23,6 +23,7 @@ Provide a project-scoped resource/skill manifest boundary that can inspect and p
 - `crates/tools/src/archive.rs`, `crates/tools/src/lib.rs`, `crates/tools/Cargo.toml`
 - `crates/server/src/routes_resources.rs`, `crates/server/src/lib.rs`
 - `crates/tools/tests/resource_security.rs`
+- `crates/storage/tests/w10_documents.rs`: transactional resource metadata replacement coverage.
 
 ## Verification
 - `cargo test -p devfoundry-tools --test resource_security`: 4 passed.
@@ -34,6 +35,7 @@ Provide a project-scoped resource/skill manifest boundary that can inspect and p
   `git diff --check`. W22 remains intentionally partial at the mutation
   boundary; install publication and edited-file-preserving removal are not
   claimed complete.
+- Resource metadata regression: `resource_file_metadata_replacement_is_transactional` passed, confirming installed hashes are persisted with the resource projection.
 - `cargo fmt --all`: run; formatting changes are limited to touched files plus pre-existing formatter drift reported by the workspace.
 
 ## Risks And Follow-Up
