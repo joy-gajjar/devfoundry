@@ -13,6 +13,7 @@ use std::{
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
+pub mod archive;
 mod integration;
 mod terminal;
 mod worktree;
@@ -82,6 +83,22 @@ impl PermissionBroker for DefaultPermissions {
 
 #[derive(Clone, Default)]
 pub struct AllowAllPermissions;
+
+#[derive(Clone, Default)]
+pub struct DenyPermissions;
+
+#[async_trait]
+impl PermissionBroker for DenyPermissions {
+    async fn authorize(
+        &self,
+        operation: &str,
+        _target: &str,
+    ) -> Result<PermissionDecision, DomainError> {
+        Err(DomainError::PermissionDenied {
+            operation: operation.into(),
+        })
+    }
+}
 
 #[async_trait]
 impl PermissionBroker for AllowAllPermissions {

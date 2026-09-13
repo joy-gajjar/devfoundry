@@ -1,4 +1,4 @@
-import type { DocumentListResponse, HistoryResponse, Snapshot, Task, WorkspaceError } from './types'
+import type { BrowserBootstrap, DocumentListResponse, HistoryResponse, Snapshot, Task, WorkspaceError, WorkspaceEvent } from './types'
 
 type Fetcher = typeof fetch
 
@@ -36,10 +36,32 @@ export function createWorkspaceClient(options: ClientOptions = {}) {
     }
   }
 
+  async function reconcileSession(sessionId: string, options: { replayGap?: boolean } = {}) {
+    const snapshot = await get<Snapshot>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/snapshot`)
+    if (options.replayGap) {
+      try {
+        await get<unknown>(`${snapshot.replay.events_url}?after=${snapshot.replay.after}`)
+      } catch {
+        return {
+          snapshot: await get<Snapshot>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/snapshot`),
+          cursor: snapshot.replay.after,
+        }
+      }
+    }
+    return { snapshot, cursor: snapshot.replay.after }
+  }
+
+  function acceptEvent(event: WorkspaceEvent): boolean {
+    return ['session_status', 'message_created', 'message_updated', 'permission_requested', 'permission_resolved'].includes(event.type)
+  }
+
   return {
     getSnapshot: (sessionId: string) => get<Snapshot>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/snapshot`),
     getHistory: (sessionId: string, after?: string) => get<HistoryResponse>(`/api/v2/sessions/${encodeURIComponent(sessionId)}/messages?limit=100${after ? `&after=${encodeURIComponent(after)}` : ''}`),
     getTasks: (workspaceId: string) => get<Task[]>(`/api/v2/workspaces/${encodeURIComponent(workspaceId)}/tasks`),
     getDocuments: (projectId: string) => get<DocumentListResponse>(`/api/v2/projects/${encodeURIComponent(projectId)}/documents`),
+    getBootstrap: () => get<BrowserBootstrap>('/api/v2/browser/bootstrap'),
+    reconcileSession,
+    acceptEvent,
   }
 }

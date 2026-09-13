@@ -7,6 +7,9 @@ use std::str::FromStr;
 use thiserror::Error;
 use ulid::Ulid;
 
+pub mod resources;
+pub use resources::{InstalledResource, ResourceFile, ResourceManifest};
+
 macro_rules! id_type {
     ($name:ident) => {
         #[derive(

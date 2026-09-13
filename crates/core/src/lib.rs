@@ -19,6 +19,7 @@ use tokio_util::sync::CancellationToken;
 
 mod context;
 mod host;
+mod resources;
 mod scheduler;
 mod scheduler_adapter;
 mod secret_bindings;
@@ -26,6 +27,7 @@ mod tasks;
 mod workers;
 pub use context::ContextManifestBuilder;
 pub use host::WorkerHost;
+pub use resources::{ResourceError, ResourceService};
 pub use scheduler::{
     Assignment, Blocker, DependencyReceipt, Scheduler, SchedulerError, SchedulerLimits,
     SchedulerTask, TaskAttemptState, dependency_readiness,

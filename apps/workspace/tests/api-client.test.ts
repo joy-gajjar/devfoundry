@@ -44,4 +44,25 @@ describe('workspace API client', () => {
     expect(fetcher.mock.calls[0][1]).not.toHaveProperty('headers.Authorization')
     expect(window.localStorage.length).toBe(0)
   })
+
+  it('reconnects from the last durable cursor and refreshes after a replay gap', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(snapshotFixture), { status: 200 }))
+      .mockResolvedValueOnce(new Response('', { status: 409 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(snapshotFixture), { status: 200 }))
+    const client = createWorkspaceClient({ baseUrl: 'http://localhost:3000', fetcher })
+
+    const stream = await client.reconcileSession('session-1', { replayGap: true })
+
+    expect(stream.snapshot.replay.after).toBe(42)
+    expect(fetcher).toHaveBeenNthCalledWith(3,
+      'http://localhost:3000/api/v2/sessions/session-1/snapshot',
+      expect.objectContaining({ method: 'GET' }),
+    )
+  })
+
+  it('ignores unknown event kinds at the browser boundary', () => {
+    const client = createWorkspaceClient()
+    expect(client.acceptEvent({ type: 'future_event', sequence: 43 })).toBe(false)
+  })
 })

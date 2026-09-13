@@ -107,3 +107,11 @@ Status: accepted. Core patching uses a repository-local, line-oriented patch env
 - Exact stable client naming (`session` versus `sessions`).
 
 Each open decision needs an owner, options, compatibility impact, and deadline before the affected gate.
+# W22 Resource Library
+
+- **Decision:** Resource packages are copy-only, manifest-driven inputs. Installation never executes hooks, shell commands, binaries, MCP configuration, or capability grants.
+- **Security rationale:** Model arguments, archives, manifests, and repository instructions are hostile input. Traversal, absolute paths, links/special files, duplicate targets, malformed paths, and bounded-resource violations fail closed before staging.
+- **Permission decision:** Core resource mutations receive an injected `PermissionBroker`; they do not self-approve. The current server route boundary fails closed until a broker is explicitly present in `ServerState`.
+- **Persistence decision:** `0005_resources.sql` is forward-only and stores project/resource metadata and declared file hashes. Existing migrations are unchanged.
+- **Removal decision:** Edited-file-preserving removal requires persisted installed hashes and an atomic removal projection. W22 does not claim removal is implemented until that boundary exists; returning an unsupported error is safer than deleting user edits.
+- **Residual risk:** The current minimal installer stages and publishes files sequentially and does not yet provide crash-safe multi-file rollback. Zip/tar parser adapters are deferred pending separate archive-format review.

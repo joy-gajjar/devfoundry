@@ -26,10 +26,14 @@ use std::{collections::HashMap, convert::Infallible, sync::Arc};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
+mod browser;
+mod routes_resources;
 mod routes_v2;
 mod routes_w10;
 mod routes_workers;
 pub mod w10;
+
+pub use browser::BrowserConfig;
 
 #[derive(Clone)]
 pub struct ServerState {
@@ -235,6 +239,26 @@ pub fn router_with_security(state: ServerState, security: ApiSecurity) -> Router
             "/api/v2/attempts/{attempt_id}/evidence",
             get(routes_workers::evidence),
         )
+        .route(
+            "/api/v2/projects/{project_id}/resources/inspect",
+            post(routes_resources::inspect),
+        )
+        .route(
+            "/api/v2/projects/{project_id}/resources/preview",
+            post(routes_resources::preview),
+        )
+        .route(
+            "/api/v2/projects/{project_id}/resources/install",
+            post(routes_resources::install),
+        )
+        .route(
+            "/api/v2/resources/{resource_id}/update",
+            post(routes_resources::update),
+        )
+        .route(
+            "/api/v2/resources/{resource_id}/remove",
+            post(routes_resources::remove),
+        )
         .layer(tower_http::limit::RequestBodyLimitLayer::new(
             MAX_REQUEST_BYTES,
         ))
@@ -254,12 +278,39 @@ pub fn router_with_security(state: ServerState, security: ApiSecurity) -> Router
         .with_state(state)
 }
 
+pub fn router_with_browser(
+    state: ServerState,
+    mut security: ApiSecurity,
+    config: BrowserConfig,
+) -> Router {
+    if let Some(origin) = config.allowed_origin.clone() {
+        security.allowed_origins = vec![origin];
+    }
+    let mut router = router_with_security(state, security);
+    if !config.enabled {
+        return router;
+    }
+    let root = Arc::new(
+        config
+            .asset_root
+            .expect("browser asset_root is required when enabled")
+            .canonicalize()
+            .expect("browser asset_root must exist"),
+    );
+    router = router
+        .route("/api/v2/browser/bootstrap", get(browser::bootstrap))
+        .route("/", get(browser::index))
+        .route("/{*path}", get(browser::asset))
+        .layer(Extension(root));
+    router
+}
+
 async fn api_authentication(
     request: axum::http::Request<axum::body::Body>,
     next: Next,
 ) -> Response {
     let security = request.extensions().get::<ApiSecurity>();
-    let origin_allowed = security.is_none_or(|security| security.bearer_token.is_none())
+    let origin_allowed = security.is_none_or(|security| security.allowed_origins.is_empty())
         || request.headers().get(header::ORIGIN).is_none_or(|origin| {
             security.is_some_and(|security| {
                 security
@@ -274,6 +325,47 @@ async fn api_authentication(
             Json(serde_json::json!({
                 "code": "origin_not_allowed",
                 "message": "request origin is not allowed"
+            })),
+        )
+            .into_response();
+    }
+    let host_allowed = security.is_none_or(|security| {
+        security.allowed_origins.is_empty()
+            || request.headers().get(header::HOST).is_none_or(|host| {
+                security.allowed_origins.iter().any(|origin| {
+                    origin
+                        .to_str()
+                        .ok()
+                        .and_then(|value| {
+                            value
+                                .strip_prefix("http://")
+                                .or_else(|| value.strip_prefix("https://"))
+                        })
+                        .is_some_and(|authority| authority == host.to_str().unwrap_or_default())
+                })
+            })
+    });
+    if !host_allowed {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "code": "host_not_allowed",
+                "message": "request host is not allowed"
+            })),
+        )
+            .into_response();
+    }
+    if request.method() != Method::GET
+        && request.method() != Method::HEAD
+        && request.method() != Method::OPTIONS
+        && request.headers().get(header::ORIGIN).is_some()
+        && request.headers().get("x-csrf-token").is_none()
+    {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "code": "csrf_required",
+                "message": "a CSRF token is required for browser mutations"
             })),
         )
             .into_response();

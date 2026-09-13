@@ -23,9 +23,11 @@ use std::{
 use tokio::sync::broadcast;
 
 mod documents;
+mod resources;
 mod scheduler;
 mod tasks;
 pub use documents::DocumentRepository;
+pub use resources::ResourceRepository;
 pub use scheduler::{
     EvidenceRecord, SchedulerRepository, WorkerAttempt, WorkerAttemptStatus, WorkerLease,
     WorkerLeaseStatus,

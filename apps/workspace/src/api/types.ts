@@ -54,7 +54,10 @@ export interface HistoryResponse {
 }
 
 export interface WorkspaceError extends Error {
-  kind: 'network' | 'http' | 'decode'
+  kind: 'network' | 'http' | 'decode' | 'replay-gap'
   retryable: boolean
   status?: number
 }
+
+export interface BrowserBootstrap { version: 2; api_base: string }
+export interface WorkspaceEvent { type: string; sequence?: number; [key: string]: unknown }
