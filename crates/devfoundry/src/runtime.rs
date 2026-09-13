@@ -310,6 +310,11 @@ async fn build_app_with_store(
             store,
             runner,
             executions: executions.clone(),
+            previews: Arc::new(tokio::sync::Mutex::new(
+                devfoundry_core::PreviewRegistry::default(),
+            )),
+            preview_permissions: Arc::new(devfoundry_tools::DefaultPermissions),
+            terminals: Arc::new(tokio::sync::Mutex::new(Default::default())),
         },
         security,
     );

@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { documentsFixture, snapshotFixture, tasksFixture } from './api/fixtures'
 import './styles.css'
+import { PreviewPanel } from './preview/PreviewPanel'
+import { TerminalPanel } from './terminal/TerminalPanel'
 
-type Surface = 'Chat' | 'Tasks' | 'Docs'
+type Surface = 'Chat' | 'Tasks' | 'Docs' | 'Preview' | 'Terminal'
 type AppState = 'ready' | 'reconnecting' | 'error'
 
 interface AppProps { initialState?: AppState }
@@ -11,6 +13,8 @@ const surfaceCopy: Record<Surface, string> = {
   Chat: 'Session transcript',
   Tasks: 'Task board',
   Docs: 'Project documents',
+  Preview: 'Managed preview',
+  Terminal: 'Native terminal',
 }
 
 export function App({ initialState = 'ready' }: AppProps) {
@@ -48,7 +52,7 @@ export function App({ initialState = 'ready' }: AppProps) {
 
         <main className="main-panel">
           <div className="mobile-tabs" role="tablist" aria-label="Workspace surfaces">
-            {(['Chat', 'Tasks', 'Docs'] as Surface[]).map((item) => (
+              {(['Chat', 'Tasks', 'Docs', 'Preview', 'Terminal'] as Surface[]).map((item) => (
               <button key={item} role="tab" aria-selected={surface === item} className={surface === item ? 'selected' : ''} type="button" onClick={() => setSurface(item)}>{item}</button>
             ))}
           </div>
@@ -56,7 +60,9 @@ export function App({ initialState = 'ready' }: AppProps) {
           {state !== 'ready' && <div className="alert" role="alert"><strong>{state === 'reconnecting' ? 'Live updates paused.' : 'The API is unavailable.'}</strong><span>{state === 'reconnecting' ? 'The last durable snapshot remains visible while reconnecting.' : 'Refresh or check the local DevFoundry host.'}</span></div>}
           {surface === 'Chat' && <ChatSurface />}
           {surface === 'Tasks' && <TaskSurface />}
-          {surface === 'Docs' && <DocsSurface />}
+           {surface === 'Docs' && <DocsSurface />}
+            {surface === 'Preview' && <PreviewPanel status="ready" previewUrl="http://127.0.0.1:4173" onStop={() => undefined} />}
+           {surface === 'Terminal' && <TerminalPanel />}
         </main>
         <aside className="inspector" aria-label="Workspace status">
           <section><span className="section-label">RUN STATUS</span><div className="status-line"><span className="status-chip running">RUNNING</span><span>1 active session</span></div></section>

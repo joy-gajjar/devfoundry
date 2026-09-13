@@ -73,6 +73,11 @@ async fn fixture() -> (Router, tempfile::TempDir) {
         store,
         runner,
         executions: Arc::new(ExecutionRegistry::default()),
+        previews: Arc::new(tokio::sync::Mutex::new(
+            devfoundry_core::PreviewRegistry::default(),
+        )),
+        preview_permissions: Arc::new(devfoundry_tools::AllowAllPermissions),
+        terminals: Arc::new(tokio::sync::Mutex::new(Default::default())),
     });
     (app, directory)
 }

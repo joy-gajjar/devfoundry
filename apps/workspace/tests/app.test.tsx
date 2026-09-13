@@ -10,6 +10,7 @@ describe('workspace shell', () => {
     expect(screen.getByRole('tab', { name: 'Chat' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Tasks' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Docs' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Terminal' })).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('Reconnecting')
   })
 })

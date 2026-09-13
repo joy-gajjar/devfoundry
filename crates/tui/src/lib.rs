@@ -20,6 +20,7 @@ use std::io;
 use std::time::{Duration, Instant};
 
 pub mod client;
+pub mod terminal;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TranscriptRole {
@@ -53,9 +54,12 @@ pub struct TuiState {
     pub command_palette: bool,
     pub spinner: usize,
     pub scroll_mode: bool,
+    pub terminal: TerminalPaneState,
     pending_prompt: Option<String>,
     dismissed_permission: Option<devfoundry_schema::PermissionRequestId>,
 }
+
+pub use terminal::TerminalPaneState;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PermissionApprovalAction {
@@ -178,6 +182,13 @@ impl TuiState {
             return None;
         }
         match key.code {
+            KeyCode::Char(']')
+                if key.modifiers.contains(event::KeyModifiers::CONTROL)
+                    && self.terminal.focused =>
+            {
+                self.terminal.focused = false;
+                None
+            }
             KeyCode::Char('c') if key.modifiers.contains(event::KeyModifiers::CONTROL) => {
                 self.should_exit = true;
                 None
@@ -244,6 +255,10 @@ impl TuiState {
                 None
             }
             KeyCode::Char(character) => {
+                if self.terminal.focused {
+                    self.terminal.input.push(character as u8);
+                    return None;
+                }
                 self.input.push(character);
                 None
             }

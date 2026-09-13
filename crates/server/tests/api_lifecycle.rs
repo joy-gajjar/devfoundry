@@ -76,6 +76,11 @@ async fn fixture_with_security(
             store,
             runner,
             executions: executions.clone(),
+            previews: std::sync::Arc::new(tokio::sync::Mutex::new(
+                devfoundry_core::PreviewRegistry::default(),
+            )),
+            preview_permissions: std::sync::Arc::new(devfoundry_tools::AllowAllPermissions),
+            terminals: std::sync::Arc::new(tokio::sync::Mutex::new(Default::default())),
         },
         security,
     );

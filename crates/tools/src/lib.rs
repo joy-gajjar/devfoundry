@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 pub mod archive;
 mod integration;
+mod preview;
 mod terminal;
 mod worktree;
 
@@ -26,6 +27,7 @@ pub use integration::{
     IntegrationCapability, IntegrationContractError, IntegrationDescriptor, IntegrationKind,
     IntegrationRequest,
 };
+pub use preview::{PreviewLaunch, PreviewProcess};
 pub use terminal::{
     InputLease, MAX_PTY_INPUT_BYTES, MAX_PTY_OUTPUT_BYTES, NativePtyError, NativePtyService,
     PtyCapability, PtyInput, PtyOpenRequest, PtyOutput, PtyResize,

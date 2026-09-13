@@ -10,7 +10,7 @@ use axum::{
     routing::{get, post},
 };
 use chrono::Utc;
-use devfoundry_core::SessionRunner;
+use devfoundry_core::{PreviewRegistry, SessionRunner};
 use devfoundry_protocol::{
     CreateProjectRequest, CreateSessionRequest, ErrorResponse, ModelOption, PromptRequest,
     PromptStatusResponse, UpdateSessionRequest,
@@ -27,7 +27,9 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 mod browser;
+mod routes_previews;
 mod routes_resources;
+mod routes_terminals;
 mod routes_v2;
 mod routes_w10;
 mod routes_workers;
@@ -40,6 +42,9 @@ pub struct ServerState {
     pub store: Arc<SqliteStore>,
     pub runner: Arc<SessionRunner>,
     pub executions: Arc<ExecutionRegistry>,
+    pub previews: Arc<Mutex<PreviewRegistry>>,
+    pub preview_permissions: Arc<dyn devfoundry_tools::PermissionBroker>,
+    pub terminals: Arc<Mutex<routes_terminals::TerminalRegistry>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -165,6 +170,16 @@ pub fn router(state: ServerState) -> Router {
     router_with_security(state, ApiSecurity::default())
 }
 
+pub fn router_with_previews(
+    state: ServerState,
+    security: ApiSecurity,
+    previews: Arc<Mutex<PreviewRegistry>>,
+) -> Router {
+    let mut state = state;
+    state.previews = previews;
+    router_with_security(state, security)
+}
+
 pub fn router_with_security(state: ServerState, security: ApiSecurity) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -258,6 +273,50 @@ pub fn router_with_security(state: ServerState, security: ApiSecurity) -> Router
         .route(
             "/api/v2/resources/{resource_id}/remove",
             post(routes_resources::remove),
+        )
+        .route(
+            "/api/v2/projects/{project_id}/previews",
+            post(routes_previews::start),
+        )
+        .route(
+            "/api/v2/previews/{preview_id}",
+            get(routes_previews::status),
+        )
+        .route(
+            "/api/v2/previews/{preview_id}/stop",
+            post(routes_previews::stop),
+        )
+        .route(
+            "/api/v2/previews/{preview_id}/screenshots",
+            post(routes_previews::screenshot),
+        )
+        .route(
+            "/api/v2/previews/{preview_id}/annotations",
+            post(routes_previews::annotation),
+        )
+        .route(
+            "/api/v2/projects/{project_id}/terminals",
+            post(routes_terminals::create),
+        )
+        .route(
+            "/api/v2/terminals/{terminal_id}/input-lease",
+            post(routes_terminals::acquire_lease).delete(routes_terminals::release_lease),
+        )
+        .route(
+            "/api/v2/terminals/{terminal_id}/input",
+            post(routes_terminals::input),
+        )
+        .route(
+            "/api/v2/terminals/{terminal_id}/resize",
+            post(routes_terminals::resize),
+        )
+        .route(
+            "/api/v2/terminals/{terminal_id}/output",
+            get(routes_terminals::output),
+        )
+        .route(
+            "/api/v2/terminals/{terminal_id}/close",
+            post(routes_terminals::close),
         )
         .layer(tower_http::limit::RequestBodyLimitLayer::new(
             MAX_REQUEST_BYTES,
@@ -923,6 +982,20 @@ fn error(status: StatusCode, code: &str, message: &str) -> ApiError {
             retryable: status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS,
             details: std::collections::BTreeMap::new(),
         },
+    }
+}
+
+impl ApiError {
+    pub(crate) fn bad_request(code: &str, message: &str) -> Self {
+        error(StatusCode::BAD_REQUEST, code, message)
+    }
+
+    pub(crate) fn not_found(code: &str, message: &str) -> Self {
+        error(StatusCode::NOT_FOUND, code, message)
+    }
+
+    pub(crate) fn conflict(code: &str, message: &str) -> Self {
+        error(StatusCode::CONFLICT, code, message)
     }
 }
 

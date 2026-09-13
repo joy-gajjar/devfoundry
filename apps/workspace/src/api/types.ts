@@ -61,3 +61,7 @@ export interface WorkspaceError extends Error {
 
 export interface BrowserBootstrap { version: 2; api_base: string }
 export interface WorkspaceEvent { type: string; sequence?: number; [key: string]: unknown }
+
+export interface TerminalInfo { terminal_id: string; project_id: string; platform: string }
+export interface TerminalOutput { terminal_id: string; offset: number; next_offset: number; bytes: string; truncated: boolean; gap: boolean }
+export interface WorkerProjection { id: string; task_id: string; status: string; revision?: number; evidence_count?: number }
