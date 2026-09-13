@@ -31,6 +31,7 @@ async fn fixture() -> axum::Router {
             previews: service.clone(),
             preview_permissions: Arc::new(AllowAllPermissions),
             terminals: Arc::new(tokio::sync::Mutex::new(Default::default())),
+            workers: Arc::new(devfoundry_server::routes_workers::WorkerRegistry::default()),
         },
         ApiSecurity::default(),
         service,

@@ -55,6 +55,7 @@ async fn fixture(config: BrowserConfig) -> (axum::Router, tempfile::TempDir) {
             )),
             preview_permissions: Arc::new(devfoundry_tools::AllowAllPermissions),
             terminals: Arc::new(tokio::sync::Mutex::new(Default::default())),
+            workers: Arc::new(devfoundry_server::routes_workers::WorkerRegistry::default()),
         },
         ApiSecurity::default(),
         config,

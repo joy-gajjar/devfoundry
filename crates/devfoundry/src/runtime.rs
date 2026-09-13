@@ -315,6 +315,7 @@ async fn build_app_with_store(
             )),
             preview_permissions: Arc::new(devfoundry_tools::DefaultPermissions),
             terminals: Arc::new(tokio::sync::Mutex::new(Default::default())),
+            workers: Arc::new(devfoundry_server::routes_workers::WorkerRegistry::default()),
         },
         security,
     );

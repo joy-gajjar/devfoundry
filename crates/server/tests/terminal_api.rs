@@ -27,6 +27,7 @@ async fn fixture() -> (axum::Router, tempfile::TempDir) {
         previews: Arc::new(tokio::sync::Mutex::new(PreviewRegistry::default())),
         preview_permissions: Arc::new(devfoundry_tools::AllowAllPermissions),
         terminals: Arc::new(tokio::sync::Mutex::new(Default::default())),
+        workers: Arc::new(devfoundry_server::routes_workers::WorkerRegistry::default()),
     });
     let _ = ApiSecurity::default();
     (app, directory)

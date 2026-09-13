@@ -26,6 +26,7 @@ async fn notification_status_is_disabled_and_setup_never_returns_secret_material
         previews: Arc::new(tokio::sync::Mutex::new(Default::default())),
         preview_permissions: Arc::new(devfoundry_tools::AllowAllPermissions),
         terminals: Arc::new(tokio::sync::Mutex::new(Default::default())),
+        workers: Arc::new(devfoundry_server::routes_workers::WorkerRegistry::default()),
     });
     let response = app
         .oneshot(
