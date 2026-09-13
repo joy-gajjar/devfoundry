@@ -4,7 +4,7 @@
 
 Executed the deferred completion plan on `feat/granular-workspace` after the existing foundation through commit `a9709ac`. The campaign added durable worker execution persistence, opt-in browser hosting/auth boundaries, resource/preview/terminal surfaces, notification metadata/outbox, and the remaining security/test documentation.
 
-The campaign did not falsely enable unsafe or unverified behavior. W19 now has an explicit core `execute_admitted` bridge through a required worktree adapter plus a server assignment validation boundary that claims only validated leases and returns pending-adapter state; restart-safe external process recovery remains open. W22 resource mutation remains partially fail-closed. W23 native credential enablement remains blocked because dependency audit tooling and disposable native fixtures are unavailable. Linux/Windows runtime support and release archive verification remain external gates.
+The campaign did not falsely enable unsafe or unverified behavior. W19 now has an explicit core `execute_admitted` bridge through a required worktree adapter plus a server assignment boundary that validates project/session/provider/Git prerequisites, claims durable leases and schedules worker execution; restart-safe external process recovery remains open. W22 resource mutation remains partially fail-closed. W23 native credential enablement remains blocked because dependency audit tooling and disposable native fixtures are unavailable. Linux/Windows runtime support and release archive verification remain external gates.
 
 ## Assessment vs Reality
 
@@ -115,7 +115,7 @@ The implementation is distributed across the following areas:
 
 ## Deferred Work
 
-- Add server-driven worker assignment that constructs `WorkerExecutionInput` from a durable lease and W08 worktree adapter; preserve fail-closed behavior when the adapter is absent.
+- Add restart-safe external worker/process recovery and durable failure-fingerprint/integration-receipt projections; preserve fail-closed behavior for uncertain side effects.
 - Add storage-backed failure fingerprint/integration receipt query/write APIs where worker execution requires them.
 - Complete resource publication/update/remove with persisted installed-file hashes and crash-safe rollback.
 - Approve and audit a native credential dependency; gather macOS/Linux/Windows disposable native evidence.

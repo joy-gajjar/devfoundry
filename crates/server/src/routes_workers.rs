@@ -1,15 +1,20 @@
 use crate::{ApiResult, ServerState, error, storage_error};
+use async_trait::async_trait;
 use axum::{
     Json,
     extract::{Path, State},
     http::StatusCode,
 };
+use devfoundry_core::{WorkerExecutionInput, WorkerFailure, WorkerHost, WorkerWorktree};
 use devfoundry_schema::{AttemptId, Revision, TaskId};
 use devfoundry_storage::{
     ProjectRepository, SchedulerRepository, SessionRepository, TaskRepository, WorkerAttemptStatus,
 };
+use devfoundry_tools::{WorktreeManager, WorktreeRequest};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct AssignRequest {
@@ -25,6 +30,34 @@ pub(crate) struct AssignmentResponse {
     revision: Revision,
     status: &'static str,
     execution: &'static str,
+}
+
+struct ServerWorktreeAdapter {
+    manager: Arc<WorktreeManager>,
+    worker_id: String,
+}
+
+#[async_trait]
+impl WorkerWorktree for ServerWorktreeAdapter {
+    async fn prepare(&self, input: &WorkerExecutionInput) -> Result<PathBuf, WorkerFailure> {
+        let allocated = self
+            .manager
+            .allocate(
+                WorktreeRequest::new(self.worker_id.clone(), "HEAD"),
+                CancellationToken::new(),
+            )
+            .await
+            .map_err(|error| WorkerFailure::Execution(error.to_string()))?;
+        if allocated.metadata.base_commit.is_empty() {
+            return Err(WorkerFailure::Execution(
+                "worktree base commit is empty".into(),
+            ));
+        }
+        if input.task_revision.0 == 0 {
+            return Err(WorkerFailure::Execution("task revision is invalid".into()));
+        }
+        Ok(allocated.path)
+    }
 }
 
 pub(crate) async fn assign(
@@ -128,7 +161,49 @@ pub(crate) async fn assign(
             ) => error(StatusCode::CONFLICT, "task_conflict", &message),
             other => storage_error(other),
         })?;
-    let _ = (session, root, request.prompt);
+    let worktree_root = root
+        .parent()
+        .ok_or_else(|| {
+            error(
+                StatusCode::CONFLICT,
+                "worker_worktree_required",
+                "project has no worktree parent",
+            )
+        })?
+        .join(".devfoundry-worktrees");
+    let manager = WorktreeManager::new(root, worktree_root, state.preview_permissions.clone())
+        .map_err(|worktree_error| {
+            error(
+                StatusCode::CONFLICT,
+                "worker_worktree_required",
+                &worktree_error.to_string(),
+            )
+        })?;
+    let lease_id = lease.id.clone();
+    let attempt_id = AttemptId::new();
+    let worker_id = request.owner.clone();
+    let adapter = ServerWorktreeAdapter {
+        manager: Arc::new(manager),
+        worker_id,
+    };
+    let input = WorkerExecutionInput {
+        task_id,
+        task_revision: request.expected_revision,
+        session,
+        prompt: request.prompt,
+        root: PathBuf::from("."),
+        idempotency_key: format!("worker:{task_id}:{lease_id}"),
+        lease_id: lease_id.clone(),
+        attempt_id,
+    };
+    let runner = state.runner.clone();
+    let store = state.store.clone();
+    tokio::spawn(async move {
+        let host = WorkerHost::new(store);
+        let _ = host
+            .execute_admitted(&runner, &adapter, input, "github-copilot")
+            .await;
+    });
     Ok((
         StatusCode::ACCEPTED,
         Json(AssignmentResponse {
@@ -136,7 +211,7 @@ pub(crate) async fn assign(
             task_id: lease.task_id,
             revision: lease.task_revision,
             status: "claimed",
-            execution: "admitted_attempt_pending_worktree_adapter",
+            execution: "started",
         }),
     ))
 }

@@ -53,6 +53,7 @@ Persist W09 scheduler leases, worker attempts, bounded evidence, failure/recover
 - `git diff --check`: PASS.
 - W19 bridge regression: `admitted_worker_persists_evidence_and_enters_review` passes with a Copilot fixture and fake worktree adapter; the task enters `Review` only after durable evidence settlement.
 - Server assignment regression: `worker_assignment_requires_git_project_and_returns_admission_state` passes; invalid task and non-Git project paths fail before lease claim.
+- Server assignment now validates project/session/provider/Git prerequisites, claims a durable lease only after those checks, and schedules the core host through the process-local W08 worktree adapter without claiming Git integration.
 - RED evidence: the new targets failed on missing W19 repository/types/methods and missing `WorkerHost`.
 - GREEN evidence: the same targeted storage/core targets passed after implementation.
 - Full workspace gates are recorded after execution.
