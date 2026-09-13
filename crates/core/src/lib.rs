@@ -28,7 +28,7 @@ mod secret_bindings;
 mod tasks;
 mod workers;
 pub use context::ContextManifestBuilder;
-pub use host::WorkerHost;
+pub use host::{WorkerExecutionInput, WorkerHost, WorkerWorktree};
 pub use notifications::NotificationService;
 pub use previews::{PreviewId, PreviewRegistry, PreviewService, PreviewState};
 pub use resources::{ResourceError, ResourceService};

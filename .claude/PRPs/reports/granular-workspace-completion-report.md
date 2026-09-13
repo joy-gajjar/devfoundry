@@ -4,7 +4,7 @@
 
 Executed the deferred completion plan on `feat/granular-workspace` after the existing foundation through commit `a9709ac`. The campaign added durable worker execution persistence, opt-in browser hosting/auth boundaries, resource/preview/terminal surfaces, notification metadata/outbox, and the remaining security/test documentation.
 
-The campaign did not falsely enable unsafe or unverified behavior. W19's worker host remains fail-closed until legacy prompt admission is atomically bridged. W22 resource mutation remains partially fail-closed. W23 native credential enablement remains blocked because dependency audit tooling and disposable native fixtures are unavailable. Linux/Windows runtime support and release archive verification remain external gates.
+The campaign did not falsely enable unsafe or unverified behavior. W19 now has an explicit core `execute_admitted` bridge through a required worktree adapter; server-driven assignment and restart-safe external process recovery remain open. W22 resource mutation remains partially fail-closed. W23 native credential enablement remains blocked because dependency audit tooling and disposable native fixtures are unavailable. Linux/Windows runtime support and release archive verification remain external gates.
 
 ## Assessment vs Reality
 
@@ -19,7 +19,7 @@ The campaign did not falsely enable unsafe or unverified behavior. W19's worker 
 
 | # | Task | Status | Notes |
 |---|---|---|---|
-| W19 | Durable scheduler persistence and worker boundary | Partial complete | Commit `62bada9`; migration 0004, leases/attempts/evidence/recovery/API projections. WorkerHost intentionally returns `ExecutionUnavailable` until atomic legacy admission bridge exists. |
+| W19 | Durable scheduler persistence and worker boundary | Partial complete | Commit `62bada9` plus current bridge changes; durable run/attempt/evidence flow now has an explicit core execution path requiring a worktree adapter. Server-driven assignment and restart-safe external process recovery remain open. |
 | W20 | Browser host/bootstrap/auth | Complete boundary | Commit `4f0a6d7`; opt-in static host, CSP, non-secret bootstrap, Origin/Host/CSRF tests and reconnect helpers. |
 | W21 | Preview service | Complete local boundary | Commit `66c15dd`; bounded process lifecycle, worktree/artifact containment, stop/reap, isolated browser panel. Process-local/readiness/screenshot limitations remain. |
 | W22 | Resource/skill library | Partial fail-closed | Commit `4f0a6d7`; migration 0005, archive security, manifests, storage/core/routes. Install publication and edited-file-preserving update/remove remain intentionally incomplete. |
@@ -83,7 +83,7 @@ The implementation is distributed across the following areas:
 
 ## Deviations
 
-- W19 did not wire real worker execution through the legacy `SessionRunner` admission path. It fails closed with `ExecutionUnavailable` rather than risking duplicate side effects.
+- W19 added a tested core `execute_admitted` path that uses durable admission/attempt state, an explicit worktree adapter and evidence settlement; the server assignment bridge remains follow-up and absent adapters still fail closed.
 - W22 resource mutation remains fail-closed where central permission broker wiring and edited-file-preserving publication are not complete.
 - W23 did not add `keyring` because `cargo-audit` and `cargo-deny` are unavailable and native disposable credential fixtures are not approved. The existing unavailable adapter remains active.
 - W25 implements local sanitized notification metadata/outbox/pairing only; no Telegram dependency, credentials or live delivery was added.
@@ -115,7 +115,7 @@ The implementation is distributed across the following areas:
 
 ## Deferred Work
 
-- Atomically bridge `WorkerHost` to legacy prompt admission, W08 worktree allocation and durable attempt settlement.
+- Add server-driven worker assignment that constructs `WorkerExecutionInput` from a durable lease and W08 worktree adapter; preserve fail-closed behavior when the adapter is absent.
 - Add storage-backed failure fingerprint/integration receipt query/write APIs where worker execution requires them.
 - Complete resource publication/update/remove with persisted installed-file hashes and crash-safe rollback.
 - Approve and audit a native credential dependency; gather macOS/Linux/Windows disposable native evidence.
@@ -126,7 +126,7 @@ The implementation is distributed across the following areas:
 
 ## Next Steps
 
-- [ ] Review W19 `ExecutionUnavailable` bridge as the next engineering gate.
+- [ ] Add server-driven W19 assignment that constructs `WorkerExecutionInput` from durable lease state and a W08 worktree adapter.
 - [ ] Review W22 resource mutation safety before enabling install/update/remove.
 - [ ] Provision `cargo-audit`/`cargo-deny` through the approved toolchain process.
 - [ ] Run native Linux/Windows CI qualification.

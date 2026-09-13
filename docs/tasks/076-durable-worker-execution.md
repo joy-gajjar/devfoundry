@@ -23,7 +23,7 @@ Persist W09 scheduler leases, worker attempts, bounded evidence, failure/recover
 - Recovery marks started attempts `outcome_unknown` and claimed leases `recovered`; it does not replay tools or provider work.
 - Evidence is a review input only. The worker host cannot set `accepted` or invoke Git integration.
 - Durable repository methods expose domain values and `StorageResult`; core and server do not receive a database connection.
-- Worker provider validation is Copilot-only. The execution host currently fails closed with `ExecutionUnavailable` until the existing `SessionRunner` prompt-admission lifecycle can be bridged atomically without weakening W09/W08 contracts.
+- Worker provider validation is Copilot-only. `WorkerHost::execute_admitted` now admits a durable run, begins a durable attempt, requires an explicit `WorkerWorktree` adapter before invoking `SessionRunner`, and settles bounded evidence before returning a successful worker result. It never invokes Git integration. The legacy server prompt route remains separate; callers must supply the explicit lease/attempt/session input.
 - Server projections use the durable repository and do not maintain an HTTP-local lease map.
 
 ## Implementation
@@ -51,13 +51,14 @@ Persist W09 scheduler leases, worker attempts, bounded evidence, failure/recover
 - `/Users/joy/.cargo/bin/cargo test --workspace`: PASS; all workspace unit, integration, native integration, and doc-test targets passed.
 - `bash scripts/validate-secretless.sh`: PASS; secretless shell, JSON, version, workflow, and documentation validation passed.
 - `git diff --check`: PASS.
+- W19 bridge regression: `admitted_worker_persists_evidence_and_enters_review` passes with a Copilot fixture and fake worktree adapter; the task enters `Review` only after durable evidence settlement.
 - RED evidence: the new targets failed on missing W19 repository/types/methods and missing `WorkerHost`.
 - GREEN evidence: the same targeted storage/core targets passed after implementation.
 - Full workspace gates are recorded after execution.
 
 ## Risks And Follow-Up
 
-- The current worker host does not execute a provider or allocate a worktree; it rejects execution before side effects. A follow-up contract must atomically connect durable attempt start to `SessionRunner` admission and the W08 worktree adapter.
+- The server does not yet expose an assignment route that constructs the full `WorkerExecutionInput` and W08 worktree adapter; this API/host wiring remains follow-up work. Direct core execution is tested with an explicit adapter.
 - `cancel` is a durable status projection for recovered unknown attempts, not proof that an external process has exited.
 - Failure fingerprint write/query APIs and integration-receipt write/query APIs remain follow-up repository surface work; no worker can mint an integration receipt in this slice.
 - The new scheduler tables do not yet publish scheduler-specific live events; projections read durable rows. Existing durable session/run event cursors remain authoritative and post-commit-only.
@@ -65,4 +66,4 @@ Persist W09 scheduler leases, worker attempts, bounded evidence, failure/recover
 
 ## Roadmap Gate
 
-Gate 7 remains **partial**: durable lease/attempt/evidence persistence and recovery are implemented and tested, while restart-safe provider/worktree execution and complete failure-fingerprint/integration-receipt repository APIs remain open.
+Gate 7 remains **partial**: durable lease/attempt/evidence persistence and explicit core execution are implemented and tested, while server-driven assignment, restart-safe external process recovery, and complete failure-fingerprint/integration-receipt repository APIs remain open.

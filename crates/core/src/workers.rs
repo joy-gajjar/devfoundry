@@ -70,6 +70,7 @@ impl EvidenceBundle {
 pub enum WorkerFailure {
     UnsupportedProvider,
     ExecutionUnavailable,
+    Execution(String),
 }
 
 impl fmt::Display for WorkerFailure {
@@ -80,6 +81,7 @@ impl fmt::Display for WorkerFailure {
             match self {
                 Self::UnsupportedProvider => "unsupported provider",
                 Self::ExecutionUnavailable => "worker execution adapter unavailable",
+                Self::Execution(message) => message,
             }
         )
     }
