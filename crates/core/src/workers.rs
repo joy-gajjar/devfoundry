@@ -69,11 +69,19 @@ impl EvidenceBundle {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WorkerFailure {
     UnsupportedProvider,
+    ExecutionUnavailable,
 }
 
 impl fmt::Display for WorkerFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "unsupported provider")
+        write!(
+            formatter,
+            "{}",
+            match self {
+                Self::UnsupportedProvider => "unsupported provider",
+                Self::ExecutionUnavailable => "worker execution adapter unavailable",
+            }
+        )
     }
 }
 

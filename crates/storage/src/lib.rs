@@ -23,8 +23,13 @@ use std::{
 use tokio::sync::broadcast;
 
 mod documents;
+mod scheduler;
 mod tasks;
 pub use documents::DocumentRepository;
+pub use scheduler::{
+    EvidenceRecord, SchedulerRepository, WorkerAttempt, WorkerAttemptStatus, WorkerLease,
+    WorkerLeaseStatus,
+};
 pub use tasks::{TaskRepository, TaskUpdate};
 
 #[async_trait]

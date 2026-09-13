@@ -94,6 +94,8 @@ Status: accepted. Core patching uses a repository-local, line-oriented patch env
 
 ## Open Decisions
 
+- 2026-09-13: W19 adds a forward-only scheduler execution migration and storage-owned compare-and-set leases, idempotent attempts, evidence settlement, and conservative unknown-effect recovery. Durable facts are committed before any live projection. The worker host rejects execution until the existing SessionRunner admission and W08 worktree boundary can be connected atomically; it does not simulate unsafe execution or replay uncertain tools.
+
 - 2026-09-13: W09 starts with a pure, sequential scheduler policy and immutable worker/evidence contracts. It does not add a migration or route until durable lease/attempt/evidence persistence can be composed through existing public APIs. Reviewed evidence cannot imply acceptance or Git integration; unknown child effects are never automatically replayed.
 
 - ULID versus UUID for public IDs.

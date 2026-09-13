@@ -28,6 +28,7 @@ use tokio_util::sync::CancellationToken;
 
 mod routes_v2;
 mod routes_w10;
+mod routes_workers;
 pub mod w10;
 
 #[derive(Clone)]
@@ -217,6 +218,22 @@ pub fn router_with_security(state: ServerState, security: ApiSecurity) -> Router
         .route(
             "/api/v2/tasks/{task_id}",
             get(routes_w10::get_task).patch(routes_w10::update_task),
+        )
+        .route(
+            "/api/v2/workspaces/{workspace_id}/workers",
+            get(routes_workers::workers),
+        )
+        .route(
+            "/api/v2/tasks/{task_id}/assign",
+            post(routes_workers::assign),
+        )
+        .route(
+            "/api/v2/attempts/{attempt_id}/cancel",
+            post(routes_workers::cancel),
+        )
+        .route(
+            "/api/v2/attempts/{attempt_id}/evidence",
+            get(routes_workers::evidence),
         )
         .layer(tower_http::limit::RequestBodyLimitLayer::new(
             MAX_REQUEST_BYTES,

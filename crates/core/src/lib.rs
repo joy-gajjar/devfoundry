@@ -18,15 +18,19 @@ use tokio::sync::{Mutex, oneshot};
 use tokio_util::sync::CancellationToken;
 
 mod context;
+mod host;
 mod scheduler;
+mod scheduler_adapter;
 mod secret_bindings;
 mod tasks;
 mod workers;
 pub use context::ContextManifestBuilder;
+pub use host::WorkerHost;
 pub use scheduler::{
     Assignment, Blocker, DependencyReceipt, Scheduler, SchedulerError, SchedulerLimits,
     SchedulerTask, TaskAttemptState, dependency_readiness,
 };
+pub use scheduler_adapter::SchedulerAdapter;
 pub use secret_bindings::{
     BindingScope, SecretBinding, SecretBindingError, SecretBindingRequest, SecretReference,
 };
