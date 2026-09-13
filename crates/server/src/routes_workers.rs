@@ -5,20 +5,33 @@ use axum::{
     http::StatusCode,
 };
 use devfoundry_schema::{AttemptId, Revision, TaskId};
-use devfoundry_storage::{SchedulerRepository, WorkerAttemptStatus};
-use serde::Deserialize;
+use devfoundry_storage::{
+    ProjectRepository, SchedulerRepository, SessionRepository, TaskRepository, WorkerAttemptStatus,
+};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct AssignRequest {
     pub expected_revision: Revision,
     pub owner: String,
+    pub prompt: String,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct AssignmentResponse {
+    lease_id: String,
+    task_id: TaskId,
+    revision: Revision,
+    status: &'static str,
+    execution: &'static str,
 }
 
 pub(crate) async fn assign(
     State(state): State<ServerState>,
     Path(task_id): Path<String>,
     Json(request): Json<AssignRequest>,
-) -> ApiResult<(StatusCode, Json<serde_json::Value>)> {
+) -> ApiResult<(StatusCode, Json<AssignmentResponse>)> {
     let task_id = task_id.parse::<TaskId>().map_err(|_| {
         error(
             StatusCode::BAD_REQUEST,
@@ -33,6 +46,78 @@ pub(crate) async fn assign(
             "owner is required",
         ));
     }
+    if request.prompt.trim().is_empty() || request.prompt.len() > 256 * 1024 {
+        return Err(error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_prompt",
+            "worker prompt is empty or too large",
+        ));
+    }
+    let task = state
+        .store
+        .get_task(task_id)
+        .await
+        .map_err(storage_error)?
+        .ok_or_else(|| {
+            error(
+                StatusCode::NOT_FOUND,
+                "task_not_found",
+                "task was not found",
+            )
+        })?;
+    if task.revision != request.expected_revision {
+        return Err(error(
+            StatusCode::CONFLICT,
+            "task_conflict",
+            "task revision conflict",
+        ));
+    }
+    let session_id = task.session_id.ok_or_else(|| {
+        error(
+            StatusCode::CONFLICT,
+            "worker_session_required",
+            "task has no assigned session",
+        )
+    })?;
+    let session = state
+        .store
+        .get_session(session_id)
+        .await
+        .map_err(storage_error)?
+        .ok_or_else(|| {
+            error(
+                StatusCode::NOT_FOUND,
+                "session_not_found",
+                "worker session was not found",
+            )
+        })?;
+    if session.model.provider.0 != "github-copilot" {
+        return Err(error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "unsupported_worker_provider",
+            "worker execution requires GitHub Copilot",
+        ));
+    }
+    let project = state
+        .store
+        .get_project(session.project_id)
+        .await
+        .map_err(storage_error)?
+        .ok_or_else(|| {
+            error(
+                StatusCode::NOT_FOUND,
+                "project_not_found",
+                "project was not found",
+            )
+        })?;
+    let root = PathBuf::from(project.root);
+    if !root.join(".git").exists() {
+        return Err(error(
+            StatusCode::CONFLICT,
+            "worker_worktree_required",
+            "worker execution requires a Git project",
+        ));
+    }
     let lease = state
         .store
         .claim_task(task_id, request.expected_revision, &request.owner)
@@ -43,11 +128,16 @@ pub(crate) async fn assign(
             ) => error(StatusCode::CONFLICT, "task_conflict", &message),
             other => storage_error(other),
         })?;
+    let _ = (session, root, request.prompt);
     Ok((
         StatusCode::ACCEPTED,
-        Json(
-            serde_json::json!({"lease_id": lease.id, "task_id": lease.task_id, "revision": lease.task_revision, "status": "claimed"}),
-        ),
+        Json(AssignmentResponse {
+            lease_id: lease.id,
+            task_id: lease.task_id,
+            revision: lease.task_revision,
+            status: "claimed",
+            execution: "admitted_attempt_pending_worktree_adapter",
+        }),
     ))
 }
 

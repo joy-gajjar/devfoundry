@@ -52,13 +52,14 @@ Persist W09 scheduler leases, worker attempts, bounded evidence, failure/recover
 - `bash scripts/validate-secretless.sh`: PASS; secretless shell, JSON, version, workflow, and documentation validation passed.
 - `git diff --check`: PASS.
 - W19 bridge regression: `admitted_worker_persists_evidence_and_enters_review` passes with a Copilot fixture and fake worktree adapter; the task enters `Review` only after durable evidence settlement.
+- Server assignment regression: `worker_assignment_requires_git_project_and_returns_admission_state` passes; invalid task and non-Git project paths fail before lease claim.
 - RED evidence: the new targets failed on missing W19 repository/types/methods and missing `WorkerHost`.
 - GREEN evidence: the same targeted storage/core targets passed after implementation.
 - Full workspace gates are recorded after execution.
 
 ## Risks And Follow-Up
 
-- The server does not yet expose an assignment route that constructs the full `WorkerExecutionInput` and W08 worktree adapter; this API/host wiring remains follow-up work. Direct core execution is tested with an explicit adapter.
+- The server assignment route now validates task/session/project/provider/Git prerequisites and claims a durable lease only after those checks. It returns an explicit `admitted_attempt_pending_worktree_adapter` state until the W08 adapter is wired into `ServerState`; it does not falsely claim worker execution.
 - `cancel` is a durable status projection for recovered unknown attempts, not proof that an external process has exited.
 - Failure fingerprint write/query APIs and integration-receipt write/query APIs remain follow-up repository surface work; no worker can mint an integration receipt in this slice.
 - The new scheduler tables do not yet publish scheduler-specific live events; projections read durable rows. Existing durable session/run event cursors remain authoritative and post-commit-only.

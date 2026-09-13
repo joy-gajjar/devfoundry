@@ -4,7 +4,7 @@
 
 Executed the deferred completion plan on `feat/granular-workspace` after the existing foundation through commit `a9709ac`. The campaign added durable worker execution persistence, opt-in browser hosting/auth boundaries, resource/preview/terminal surfaces, notification metadata/outbox, and the remaining security/test documentation.
 
-The campaign did not falsely enable unsafe or unverified behavior. W19 now has an explicit core `execute_admitted` bridge through a required worktree adapter; server-driven assignment and restart-safe external process recovery remain open. W22 resource mutation remains partially fail-closed. W23 native credential enablement remains blocked because dependency audit tooling and disposable native fixtures are unavailable. Linux/Windows runtime support and release archive verification remain external gates.
+The campaign did not falsely enable unsafe or unverified behavior. W19 now has an explicit core `execute_admitted` bridge through a required worktree adapter plus a server assignment validation boundary that claims only validated leases and returns pending-adapter state; restart-safe external process recovery remains open. W22 resource mutation remains partially fail-closed. W23 native credential enablement remains blocked because dependency audit tooling and disposable native fixtures are unavailable. Linux/Windows runtime support and release archive verification remain external gates.
 
 ## Assessment vs Reality
 
@@ -83,7 +83,7 @@ The implementation is distributed across the following areas:
 
 ## Deviations
 
-- W19 added a tested core `execute_admitted` path that uses durable admission/attempt state, an explicit worktree adapter and evidence settlement; the server assignment bridge remains follow-up and absent adapters still fail closed.
+- W19 added a tested core `execute_admitted` path and server assignment validation that use durable admission/attempt state, an explicit worktree adapter boundary and evidence settlement; absent adapters still fail closed.
 - W22 resource mutation remains fail-closed where central permission broker wiring and edited-file-preserving publication are not complete.
 - W23 did not add `keyring` because `cargo-audit` and `cargo-deny` are unavailable and native disposable credential fixtures are not approved. The existing unavailable adapter remains active.
 - W25 implements local sanitized notification metadata/outbox/pairing only; no Telegram dependency, credentials or live delivery was added.

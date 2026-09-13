@@ -820,6 +820,39 @@ async fn v2_snapshot_returns_versioned_session_and_replay_cursor() {
 }
 
 #[tokio::test]
+async fn worker_assignment_requires_git_project_and_returns_admission_state() {
+    let (app, directory, _executions) = fixture().await;
+    let session_id = session(&app, &directory).await;
+    let session_response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/api/v1/sessions/{session_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let session_body = json_response(session_response).await;
+    let project_id = session_body["project_id"].as_str().unwrap();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v2/tasks/invalid/assign")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"expected_revision": 0, "owner": "host", "prompt": "work"}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(project_id.len(), 26);
+}
+
+#[tokio::test]
 async fn v2_prompt_does_not_claim_durable_idempotency_without_admission_bridge() {
     let (app, directory, _executions) = fixture().await;
     let session_id = session(&app, &directory).await;
