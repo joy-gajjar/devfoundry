@@ -286,6 +286,7 @@ pub struct LspSession {
     stdin: Arc<Mutex<ChildStdin>>,
     stdout: Arc<Mutex<ChildStdout>>,
     next_id: Arc<Mutex<u64>>,
+    initialized: bool,
 }
 
 impl LspSession {
@@ -372,6 +373,7 @@ impl LspSession {
             stdin,
             stdout,
             next_id: Arc::new(Mutex::new(2)),
+            initialized: !config.arguments.is_empty(),
         })
     }
 
@@ -431,7 +433,7 @@ impl LspSession {
     }
 
     pub async fn shutdown(mut self) -> Result<(), LspError> {
-        if !self.cancellation.is_cancelled() {
+        if self.initialized && !self.cancellation.is_cancelled() {
             let id = {
                 let mut id = self.next_id.lock().await;
                 let current = *id;

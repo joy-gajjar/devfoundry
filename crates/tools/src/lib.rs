@@ -14,6 +14,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 
 mod integration;
+mod terminal;
 mod worktree;
 
 mod lsp;
@@ -23,6 +24,10 @@ mod mcp;
 pub use integration::{
     IntegrationCapability, IntegrationContractError, IntegrationDescriptor, IntegrationKind,
     IntegrationRequest,
+};
+pub use terminal::{
+    InputLease, MAX_PTY_INPUT_BYTES, MAX_PTY_OUTPUT_BYTES, NativePtyError, NativePtyService,
+    PtyCapability, PtyInput, PtyOpenRequest, PtyOutput, PtyResize,
 };
 pub use worktree::{
     HumanIntegrationAuthorization, WorktreeManager, WorktreeRequest, WorktreeStatus,
