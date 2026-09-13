@@ -23,10 +23,14 @@ use std::{
 use tokio::sync::broadcast;
 
 mod documents;
+mod notifications;
 mod resources;
 mod scheduler;
 mod tasks;
 pub use documents::DocumentRepository;
+pub use notifications::{
+    NotificationBinding, NotificationOutbox, NotificationRepository, NotificationStatus,
+};
 pub use resources::ResourceRepository;
 pub use scheduler::{
     EvidenceRecord, SchedulerRepository, WorkerAttempt, WorkerAttemptStatus, WorkerLease,

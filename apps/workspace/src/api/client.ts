@@ -1,4 +1,4 @@
-import type { BrowserBootstrap, DocumentListResponse, HistoryResponse, Snapshot, Task, TerminalOutput, WorkerProjection, WorkspaceError, WorkspaceEvent } from './types'
+import type { BrowserBootstrap, DocumentListResponse, HistoryResponse, NotificationStatus, Snapshot, Task, TerminalOutput, WorkerProjection, WorkspaceError, WorkspaceEvent } from './types'
 
 type Fetcher = typeof fetch
 
@@ -63,6 +63,7 @@ export function createWorkspaceClient(options: ClientOptions = {}) {
     getBootstrap: () => get<BrowserBootstrap>('/api/v2/browser/bootstrap'),
     getTerminalOutput: (terminalId: string, after = 0) => get<TerminalOutput>(`/api/v2/terminals/${encodeURIComponent(terminalId)}/output?after=${after}`),
     getWorkers: (workspaceId: string) => get<WorkerProjection[]>(`/api/v2/workspaces/${encodeURIComponent(workspaceId)}/workers`),
+    getNotificationStatus: (projectId: string) => get<NotificationStatus>(`/api/v2/projects/${encodeURIComponent(projectId)}/notifications/status`),
     reconcileSession,
     acceptEvent,
   }

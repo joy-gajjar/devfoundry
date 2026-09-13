@@ -27,6 +27,7 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 mod browser;
+mod routes_notifications;
 mod routes_previews;
 mod routes_resources;
 mod routes_terminals;
@@ -253,6 +254,18 @@ pub fn router_with_security(state: ServerState, security: ApiSecurity) -> Router
         .route(
             "/api/v2/attempts/{attempt_id}/evidence",
             get(routes_workers::evidence),
+        )
+        .route(
+            "/api/v2/projects/{project_id}/notifications/status",
+            get(routes_notifications::status),
+        )
+        .route(
+            "/api/v2/projects/{project_id}/notifications/setup",
+            post(routes_notifications::setup),
+        )
+        .route(
+            "/api/v2/projects/{project_id}/notifications/revoke",
+            post(routes_notifications::revoke),
         )
         .route(
             "/api/v2/projects/{project_id}/resources/inspect",

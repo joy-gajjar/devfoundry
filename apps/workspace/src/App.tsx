@@ -3,8 +3,9 @@ import { documentsFixture, snapshotFixture, tasksFixture } from './api/fixtures'
 import './styles.css'
 import { PreviewPanel } from './preview/PreviewPanel'
 import { TerminalPanel } from './terminal/TerminalPanel'
+import { NotificationSettings } from './notifications/NotificationSettings'
 
-type Surface = 'Chat' | 'Tasks' | 'Docs' | 'Preview' | 'Terminal'
+type Surface = 'Chat' | 'Tasks' | 'Docs' | 'Preview' | 'Terminal' | 'Settings'
 type AppState = 'ready' | 'reconnecting' | 'error'
 
 interface AppProps { initialState?: AppState }
@@ -15,6 +16,7 @@ const surfaceCopy: Record<Surface, string> = {
   Docs: 'Project documents',
   Preview: 'Managed preview',
   Terminal: 'Native terminal',
+  Settings: 'Notification settings',
 }
 
 export function App({ initialState = 'ready' }: AppProps) {
@@ -52,7 +54,7 @@ export function App({ initialState = 'ready' }: AppProps) {
 
         <main className="main-panel">
           <div className="mobile-tabs" role="tablist" aria-label="Workspace surfaces">
-              {(['Chat', 'Tasks', 'Docs', 'Preview', 'Terminal'] as Surface[]).map((item) => (
+              {(['Chat', 'Tasks', 'Docs', 'Preview', 'Terminal', 'Settings'] as Surface[]).map((item) => (
               <button key={item} role="tab" aria-selected={surface === item} className={surface === item ? 'selected' : ''} type="button" onClick={() => setSurface(item)}>{item}</button>
             ))}
           </div>
@@ -63,6 +65,7 @@ export function App({ initialState = 'ready' }: AppProps) {
            {surface === 'Docs' && <DocsSurface />}
             {surface === 'Preview' && <PreviewPanel status="ready" previewUrl="http://127.0.0.1:4173" onStop={() => undefined} />}
            {surface === 'Terminal' && <TerminalPanel />}
+           {surface === 'Settings' && <NotificationSettings status={{ enabled: false, paired: false, revoked: false }} onSetup={() => undefined} onRevoke={() => undefined} />}
         </main>
         <aside className="inspector" aria-label="Workspace status">
           <section><span className="section-label">RUN STATUS</span><div className="status-line"><span className="status-chip running">RUNNING</span><span>1 active session</span></div></section>

@@ -19,6 +19,7 @@ use tokio_util::sync::CancellationToken;
 
 mod context;
 mod host;
+mod notifications;
 mod previews;
 mod resources;
 mod scheduler;
@@ -28,6 +29,7 @@ mod tasks;
 mod workers;
 pub use context::ContextManifestBuilder;
 pub use host::WorkerHost;
+pub use notifications::NotificationService;
 pub use previews::{PreviewId, PreviewRegistry, PreviewService, PreviewState};
 pub use resources::{ResourceError, ResourceService};
 pub use scheduler::{
