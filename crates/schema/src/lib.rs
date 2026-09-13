@@ -8,7 +8,7 @@ use thiserror::Error;
 use ulid::Ulid;
 
 pub mod resources;
-pub use resources::{InstalledResource, ResourceFile, ResourceManifest};
+pub use resources::{InstalledResource, InstalledResourceFile, ResourceFile, ResourceManifest};
 
 macro_rules! id_type {
     ($name:ident) => {

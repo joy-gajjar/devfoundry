@@ -1,4 +1,4 @@
-use devfoundry_schema::{InstalledResource, ProjectId, ResourceManifest};
+use devfoundry_schema::{InstalledResource, InstalledResourceFile, ProjectId, ResourceManifest};
 use devfoundry_storage::SqliteStore;
 use devfoundry_tools::{
     PermissionBroker, PermissionDecision,
@@ -60,18 +60,43 @@ impl ResourceService {
         }
         let root = root.canonicalize().map_err(ResourceError::Io)?;
         let stage = stage_entries(&root, entries, &self.limits)?;
+        let mut published = Vec::new();
         for entry in entries {
             let target = root.join(&entry.path);
             if target.exists() {
+                rollback(&published);
                 std::fs::remove_dir_all(&stage).ok();
                 return Err(ResourceError::Conflict(entry.path.clone()));
             }
             if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent).map_err(ResourceError::Io)?;
+                if let Err(error) = std::fs::create_dir_all(parent) {
+                    rollback(&published);
+                    std::fs::remove_dir_all(&stage).ok();
+                    return Err(ResourceError::Io(error));
+                }
             }
-            std::fs::rename(stage.join(&entry.path), &target).map_err(ResourceError::Io)?;
+            if let Err(error) = std::fs::rename(stage.join(&entry.path), &target) {
+                rollback(&published);
+                std::fs::remove_dir_all(&stage).ok();
+                return Err(ResourceError::Io(error));
+            }
+            published.push(target);
         }
+        let files = entries
+            .iter()
+            .map(|entry| InstalledResourceFile {
+                resource_id: manifest.id.clone(),
+                project_id,
+                target: entry.path.clone(),
+                expected_hash: entry_hash(manifest, &entry.path),
+                installed_hash: sha256_hex(&entry.content),
+                size: entry.size,
+            })
+            .collect::<Vec<_>>();
         let result = self.store.save_resource(project_id, manifest).await?;
+        self.store
+            .mark_resource_files_installed(&manifest.id, project_id, &files)
+            .await?;
         std::fs::remove_dir_all(&stage).ok();
         Ok(result)
     }
@@ -86,8 +111,8 @@ impl ResourceService {
     }
     pub async fn remove(
         &self,
-        _project_id: ProjectId,
-        _root: &Path,
+        project_id: ProjectId,
+        root: &Path,
         resource_id: &str,
     ) -> Result<(), ResourceError> {
         if self
@@ -99,9 +124,37 @@ impl ResourceService {
         {
             return Err(ResourceError::Denied);
         }
-        Err(ResourceError::Unsupported(
-            "edited-file-preserving removal requires a persisted file projection".into(),
-        ))
+        let root = root.canonicalize().map_err(ResourceError::Io)?;
+        let files = self
+            .store
+            .list_resource_files(resource_id, project_id)
+            .await?;
+        let mut conflicts = Vec::new();
+        for file in &files {
+            let target = root.join(&file.target);
+            if !target.exists() {
+                continue;
+            }
+            let content = std::fs::read(&target).map_err(ResourceError::Io)?;
+            if sha256_hex(&content) != file.installed_hash {
+                conflicts.push(file.target.clone());
+                continue;
+            }
+            std::fs::remove_file(target).map_err(ResourceError::Io)?;
+        }
+        if !conflicts.is_empty() {
+            return Err(ResourceError::Conflict(format!(
+                "edited resource files preserved: {}",
+                conflicts.join(", ")
+            )));
+        }
+        Ok(())
+    }
+}
+
+fn rollback(paths: &[std::path::PathBuf]) {
+    for path in paths.iter().rev() {
+        let _ = std::fs::remove_file(path);
     }
 }
 

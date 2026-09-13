@@ -1,5 +1,7 @@
 use crate::{SqliteStore, StorageResult};
-use devfoundry_schema::{InstalledResource, ProjectId, ResourceManifest, Revision};
+use devfoundry_schema::{
+    InstalledResource, InstalledResourceFile, ProjectId, ResourceManifest, Revision,
+};
 
 pub trait ResourceRepository {
     fn _resource_repository_marker(&self) {}
@@ -31,5 +33,54 @@ impl SqliteStore {
         }
         tx.commit().await?;
         Ok(resource)
+    }
+
+    pub async fn mark_resource_files_installed(
+        &self,
+        resource_id: &str,
+        project_id: ProjectId,
+        files: &[InstalledResourceFile],
+    ) -> StorageResult<()> {
+        let mut tx = self.pool().begin().await?;
+        for file in files {
+            sqlx::query(
+                "UPDATE resource_files SET installed_hash = ? WHERE resource_id = ? AND project_id = ? AND target = ?",
+            )
+            .bind(&file.installed_hash)
+            .bind(resource_id)
+            .bind(project_id.to_string())
+            .bind(&file.target)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn list_resource_files(
+        &self,
+        resource_id: &str,
+        project_id: ProjectId,
+    ) -> StorageResult<Vec<InstalledResourceFile>> {
+        let rows = sqlx::query_as::<_, (String, String, String, i64)>(
+            "SELECT target, expected_hash, installed_hash, size FROM resource_files WHERE resource_id = ? AND project_id = ? ORDER BY target",
+        )
+        .bind(resource_id)
+        .bind(project_id.to_string())
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(target, expected_hash, installed_hash, size)| InstalledResourceFile {
+                    resource_id: resource_id.into(),
+                    project_id,
+                    target,
+                    expected_hash,
+                    installed_hash,
+                    size: size as u64,
+                },
+            )
+            .collect())
     }
 }

@@ -27,3 +27,13 @@ pub struct InstalledResource {
     pub revision: Revision,
     pub manifest_hash: String,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct InstalledResourceFile {
+    pub resource_id: String,
+    pub project_id: ProjectId,
+    pub target: String,
+    pub expected_hash: String,
+    pub installed_hash: String,
+    pub size: u64,
+}
