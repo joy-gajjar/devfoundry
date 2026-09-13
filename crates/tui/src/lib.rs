@@ -858,17 +858,17 @@ async fn select_session(
         .unwrap_or(0);
     loop {
         terminal.draw(|frame| render_project_picker(frame, &projects, project_index))?;
-        if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Up => project_index = project_index.saturating_sub(1),
-                    KeyCode::Down => project_index = (project_index + 1).min(projects.len() - 1),
-                    KeyCode::Enter => break,
-                    KeyCode::Esc | KeyCode::Char('q') => {
-                        return Err(io::Error::other("selection cancelled"));
-                    }
-                    _ => {}
+        if event::poll(Duration::from_millis(100))?
+            && let Event::Key(key) = event::read()?
+        {
+            match key.code {
+                KeyCode::Up => project_index = project_index.saturating_sub(1),
+                KeyCode::Down => project_index = (project_index + 1).min(projects.len() - 1),
+                KeyCode::Enter => break,
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    return Err(io::Error::other("selection cancelled"));
                 }
+                _ => {}
             }
         }
     }
@@ -887,116 +887,115 @@ async fn select_session(
         }
         terminal
             .draw(|frame| render_picker(frame, project, &sessions, &visible, selected, &filter))?;
-        if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                if key.code == KeyCode::Char('/')
-                    && !key.modifiers.contains(event::KeyModifiers::CONTROL)
-                {
-                    filter.clear();
-                    edit_filter(terminal, &mut filter)?;
-                    continue;
+        if event::poll(Duration::from_millis(100))?
+            && let Event::Key(key) = event::read()?
+        {
+            if key.code == KeyCode::Char('/')
+                && !key.modifiers.contains(event::KeyModifiers::CONTROL)
+            {
+                filter.clear();
+                edit_filter(terminal, &mut filter)?;
+                continue;
+            }
+            match key.code {
+                KeyCode::Up => selected = selected.saturating_sub(1),
+                KeyCode::Down if !visible.is_empty() => {
+                    selected = (selected + 1).min(visible.len() - 1)
                 }
-                match key.code {
-                    KeyCode::Up => selected = selected.saturating_sub(1),
-                    KeyCode::Down if !visible.is_empty() => {
-                        selected = (selected + 1).min(visible.len() - 1)
-                    }
-                    KeyCode::Char('n') => {
-                        let agent = select_agent(terminal, &agents).await?;
-                        let model = select_model(terminal, &models).await?;
-                        let session = client
-                            .create_session(
-                                project.id,
-                                &devfoundry_protocol::CreateSessionRequest {
-                                    project_id: project.id,
-                                    title: None,
-                                    agent: Some(AgentName(agent)),
-                                    model: Some(ModelRef {
-                                        provider: ProviderName(model.provider),
-                                        model: ModelName(model.id),
-                                    }),
-                                },
-                            )
-                            .await
-                            .map_err(client_io)?;
-                        return Ok((session, project.name.clone()));
-                    }
-                    KeyCode::Enter if !visible.is_empty() => {
-                        return Ok((sessions[visible[selected]].clone(), project.name.clone()));
-                    }
-                    KeyCode::Char('r') if !visible.is_empty() => {
-                        let index = visible[selected];
-                        let session_id = sessions[index].id;
-                        if let Some(title) =
-                            edit_text(terminal, "Rename session", &sessions[index].title)?
-                        {
-                            if !title.trim().is_empty() {
-                                sessions[index] = client
-                                    .update_session(
-                                        session_id,
-                                        &devfoundry_protocol::UpdateSessionRequest {
-                                            title: Some(title.trim().to_owned()),
-                                            agent: None,
-                                            model: None,
-                                        },
-                                    )
-                                    .await
-                                    .map_err(client_io)?;
-                            }
-                        }
-                    }
-                    KeyCode::Char('a') if !visible.is_empty() => {
-                        let index = visible[selected];
-                        let agent = select_agent(terminal, &agents).await?;
-                        let session_id = sessions[index].id;
+                KeyCode::Char('n') => {
+                    let agent = select_agent(terminal, &agents).await?;
+                    let model = select_model(terminal, &models).await?;
+                    let session = client
+                        .create_session(
+                            project.id,
+                            &devfoundry_protocol::CreateSessionRequest {
+                                project_id: project.id,
+                                title: None,
+                                agent: Some(AgentName(agent)),
+                                model: Some(ModelRef {
+                                    provider: ProviderName(model.provider),
+                                    model: ModelName(model.id),
+                                }),
+                            },
+                        )
+                        .await
+                        .map_err(client_io)?;
+                    return Ok((session, project.name.clone()));
+                }
+                KeyCode::Enter if !visible.is_empty() => {
+                    return Ok((sessions[visible[selected]].clone(), project.name.clone()));
+                }
+                KeyCode::Char('r') if !visible.is_empty() => {
+                    let index = visible[selected];
+                    let session_id = sessions[index].id;
+                    if let Some(title) =
+                        edit_text(terminal, "Rename session", &sessions[index].title)?
+                        && !title.trim().is_empty()
+                    {
                         sessions[index] = client
                             .update_session(
                                 session_id,
                                 &devfoundry_protocol::UpdateSessionRequest {
-                                    title: None,
-                                    agent: Some(AgentName(agent)),
+                                    title: Some(title.trim().to_owned()),
+                                    agent: None,
                                     model: None,
                                 },
                             )
                             .await
                             .map_err(client_io)?;
                     }
-                    KeyCode::Char('m') if !visible.is_empty() => {
-                        let index = visible[selected];
-                        let model = select_model(terminal, &models).await?;
-                        let session_id = sessions[index].id;
-                        sessions[index] = client
-                            .update_session(
-                                session_id,
-                                &devfoundry_protocol::UpdateSessionRequest {
-                                    title: None,
-                                    agent: None,
-                                    model: Some(ModelRef {
-                                        provider: ProviderName(model.provider),
-                                        model: ModelName(model.id),
-                                    }),
-                                },
-                            )
-                            .await
-                            .map_err(client_io)?;
-                    }
-                    KeyCode::Backspace if !filter.is_empty() => {
-                        filter.pop();
-                    }
-                    KeyCode::Char('q') if filter.is_empty() => {
-                        return Err(io::Error::other("selection cancelled"));
-                    }
-                    KeyCode::Char(character)
-                        if !key.modifiers.contains(event::KeyModifiers::CONTROL) =>
-                    {
-                        filter.push(character);
-                    }
-                    KeyCode::Esc if !filter.is_empty() => filter.clear(),
-                    KeyCode::Esc => {
-                        return Err(io::Error::other("selection cancelled"));
-                    }
-                    _ => {}
                 }
+                KeyCode::Char('a') if !visible.is_empty() => {
+                    let index = visible[selected];
+                    let agent = select_agent(terminal, &agents).await?;
+                    let session_id = sessions[index].id;
+                    sessions[index] = client
+                        .update_session(
+                            session_id,
+                            &devfoundry_protocol::UpdateSessionRequest {
+                                title: None,
+                                agent: Some(AgentName(agent)),
+                                model: None,
+                            },
+                        )
+                        .await
+                        .map_err(client_io)?;
+                }
+                KeyCode::Char('m') if !visible.is_empty() => {
+                    let index = visible[selected];
+                    let model = select_model(terminal, &models).await?;
+                    let session_id = sessions[index].id;
+                    sessions[index] = client
+                        .update_session(
+                            session_id,
+                            &devfoundry_protocol::UpdateSessionRequest {
+                                title: None,
+                                agent: None,
+                                model: Some(ModelRef {
+                                    provider: ProviderName(model.provider),
+                                    model: ModelName(model.id),
+                                }),
+                            },
+                        )
+                        .await
+                        .map_err(client_io)?;
+                }
+                KeyCode::Backspace if !filter.is_empty() => {
+                    filter.pop();
+                }
+                KeyCode::Char('q') if filter.is_empty() => {
+                    return Err(io::Error::other("selection cancelled"));
+                }
+                KeyCode::Char(character)
+                    if !key.modifiers.contains(event::KeyModifiers::CONTROL) =>
+                {
+                    filter.push(character);
+                }
+                KeyCode::Esc if !filter.is_empty() => filter.clear(),
+                KeyCode::Esc => {
+                    return Err(io::Error::other("selection cancelled"));
+                }
+                _ => {}
             }
         }
     }
@@ -1029,15 +1028,15 @@ async fn select_model(
                 frame.area(),
             );
         })?;
-        if event::poll(Duration::from_millis(10))? {
-            if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Up => selected = selected.saturating_sub(1),
-                    KeyCode::Down => selected = (selected + 1).min(models.len() - 1),
-                    KeyCode::Enter => return Ok(models[selected].clone()),
-                    KeyCode::Esc => return Err(io::Error::other("model selection cancelled")),
-                    _ => {}
-                }
+        if event::poll(Duration::from_millis(10))?
+            && let Event::Key(key) = event::read()?
+        {
+            match key.code {
+                KeyCode::Up => selected = selected.saturating_sub(1),
+                KeyCode::Down => selected = (selected + 1).min(models.len() - 1),
+                KeyCode::Enter => return Ok(models[selected].clone()),
+                KeyCode::Esc => return Err(io::Error::other("model selection cancelled")),
+                _ => {}
             }
         }
     }
@@ -1073,15 +1072,15 @@ async fn select_agent(
                 frame.area(),
             );
         })?;
-        if event::poll(Duration::from_millis(10))? {
-            if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Up => selected = selected.saturating_sub(1),
-                    KeyCode::Down => selected = (selected + 1).min(agents.len() - 1),
-                    KeyCode::Enter => return Ok(agents[selected].to_owned()),
-                    KeyCode::Esc => return Err(io::Error::other("agent selection cancelled")),
-                    _ => {}
-                }
+        if event::poll(Duration::from_millis(10))?
+            && let Event::Key(key) = event::read()?
+        {
+            match key.code {
+                KeyCode::Up => selected = selected.saturating_sub(1),
+                KeyCode::Down => selected = (selected + 1).min(agents.len() - 1),
+                KeyCode::Enter => return Ok(agents[selected].to_owned()),
+                KeyCode::Esc => return Err(io::Error::other("agent selection cancelled")),
+                _ => {}
             }
         }
     }
@@ -1115,16 +1114,16 @@ fn edit_filter(terminal: &mut ratatui::DefaultTerminal, filter: &mut String) -> 
                 frame.area(),
             );
         })?;
-        if event::poll(Duration::from_millis(10))? {
-            if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Enter | KeyCode::Esc => return Ok(()),
-                    KeyCode::Backspace => {
-                        filter.pop();
-                    }
-                    KeyCode::Char(character) => filter.push(character),
-                    _ => {}
+        if event::poll(Duration::from_millis(10))?
+            && let Event::Key(key) = event::read()?
+        {
+            match key.code {
+                KeyCode::Enter | KeyCode::Esc => return Ok(()),
+                KeyCode::Backspace => {
+                    filter.pop();
                 }
+                KeyCode::Char(character) => filter.push(character),
+                _ => {}
             }
         }
     }
@@ -1147,17 +1146,17 @@ fn edit_text(
                 frame.area(),
             );
         })?;
-        if event::poll(Duration::from_millis(10))? {
-            if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Enter => return Ok(Some(value)),
-                    KeyCode::Esc => return Ok(None),
-                    KeyCode::Backspace => {
-                        value.pop();
-                    }
-                    KeyCode::Char(character) => value.push(character),
-                    _ => {}
+        if event::poll(Duration::from_millis(10))?
+            && let Event::Key(key) = event::read()?
+        {
+            match key.code {
+                KeyCode::Enter => return Ok(Some(value)),
+                KeyCode::Esc => return Ok(None),
+                KeyCode::Backspace => {
+                    value.pop();
                 }
+                KeyCode::Char(character) => value.push(character),
+                _ => {}
             }
         }
     }
@@ -1365,29 +1364,28 @@ async fn run_connected_loop(
                 Event::Key(key) => {
                     if state.pending_permission.is_some() {
                         let permission_decision = state.reduce_permission_key(key);
-                        if let Some(action) = permission_decision {
-                            if let Some(request_id) =
+                        if let Some(action) = permission_decision
+                            && let Some(request_id) =
                                 state.pending_permission.as_ref().map(|r| r.id)
-                            {
-                                match action {
-                                    PermissionApprovalAction::Allow
-                                    | PermissionApprovalAction::Deny => {
-                                        let allowed = action == PermissionApprovalAction::Allow;
-                                        if let Err(error) =
-                                            client.resolve_permission(request_id, allowed).await
-                                        {
-                                            state.transcript.push(TranscriptEntry {
-                                                role: TranscriptRole::System,
-                                                text: error.to_string(),
-                                            });
-                                        } else {
-                                            state.pending_permission = None;
-                                            state.permission_modal = false;
-                                            state.status = Some(SessionStatus::Running);
-                                        }
+                        {
+                            match action {
+                                PermissionApprovalAction::Allow
+                                | PermissionApprovalAction::Deny => {
+                                    let allowed = action == PermissionApprovalAction::Allow;
+                                    if let Err(error) =
+                                        client.resolve_permission(request_id, allowed).await
+                                    {
+                                        state.transcript.push(TranscriptEntry {
+                                            role: TranscriptRole::System,
+                                            text: error.to_string(),
+                                        });
+                                    } else {
+                                        state.pending_permission = None;
+                                        state.permission_modal = false;
+                                        state.status = Some(SessionStatus::Running);
                                     }
-                                    PermissionApprovalAction::Cancel => {}
                                 }
+                                PermissionApprovalAction::Cancel => {}
                             }
                         }
                         continue;

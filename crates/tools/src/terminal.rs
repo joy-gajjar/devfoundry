@@ -258,11 +258,11 @@ mod unix {
 
     impl Drop for NativePtyService {
         fn drop(&mut self) {
-            if let Ok(closed) = self.closed.try_lock() {
-                if !*closed {
-                    terminate_pid(self.pid);
-                    unsafe { libc::waitpid(self.pid, std::ptr::null_mut(), libc::WNOHANG) };
-                }
+            if let Ok(closed) = self.closed.try_lock()
+                && !*closed
+            {
+                terminate_pid(self.pid);
+                unsafe { libc::waitpid(self.pid, std::ptr::null_mut(), libc::WNOHANG) };
             }
         }
     }

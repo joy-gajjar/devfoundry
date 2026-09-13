@@ -218,12 +218,10 @@ impl devfoundry_tools::PermissionBroker for PermissionService {
             .get_permission_request(request.id)
             .await
             .map_err(|error| devfoundry_schema::DomainError::Validation(error.to_string()))?
+            && existing.status != PermissionStatus::Pending
+            && let Some(sender) = self.pending.lock().await.remove(&request.id)
         {
-            if existing.status != PermissionStatus::Pending {
-                if let Some(sender) = self.pending.lock().await.remove(&request.id) {
-                    let _ = sender.send(existing.status == PermissionStatus::Allowed);
-                }
-            }
+            let _ = sender.send(existing.status == PermissionStatus::Allowed);
         }
         self.store
             .append_event(

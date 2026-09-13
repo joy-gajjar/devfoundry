@@ -165,10 +165,9 @@ pub fn dependency_readiness(
             if let Some(receipt) = receipts
                 .iter()
                 .find(|receipt| receipt.task_id == *dependency)
+                && !receipt.ancestor
             {
-                if !receipt.ancestor {
-                    task_blockers.push(Blocker::NotIntegrated(*dependency));
-                }
+                task_blockers.push(Blocker::NotIntegrated(*dependency));
             }
         }
         if task_blockers.is_empty() {

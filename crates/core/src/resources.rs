@@ -68,12 +68,12 @@ impl ResourceService {
                 std::fs::remove_dir_all(&stage).ok();
                 return Err(ResourceError::Conflict(entry.path.clone()));
             }
-            if let Some(parent) = target.parent() {
-                if let Err(error) = std::fs::create_dir_all(parent) {
-                    rollback(&published);
-                    std::fs::remove_dir_all(&stage).ok();
-                    return Err(ResourceError::Io(error));
-                }
+            if let Some(parent) = target.parent()
+                && let Err(error) = std::fs::create_dir_all(parent)
+            {
+                rollback(&published);
+                std::fs::remove_dir_all(&stage).ok();
+                return Err(ResourceError::Io(error));
             }
             if let Err(error) = std::fs::rename(stage.join(&entry.path), &target) {
                 rollback(&published);

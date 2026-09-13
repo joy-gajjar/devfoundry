@@ -41,3 +41,4 @@ Record the final qualification of the completion campaign, separating passing lo
 - Provide release archive/checksum to `scripts/verify-release.sh` before release readiness.
 - Docker qualification was attempted: Docker CLI is installed, but the daemon is unavailable at `unix:///Users/joy/.docker/run/docker.sock`; no Linux container result is claimed.
 - `cargo-audit` and `cargo-deny` were attempted through Cargo and are not installed; W23 remains fail-closed.
+- Docker Desktop is available and a `rust:1.88-bookworm` Linux ARM64 container was started. The declared Rust 1.85 MSRV was corrected to 1.88 because the locked dependency graph requires Rust 1.88. The cold Linux dependency build exceeded the 30-minute qualification timeout; no Linux test pass is claimed.

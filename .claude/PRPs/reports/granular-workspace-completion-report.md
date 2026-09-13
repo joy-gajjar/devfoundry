@@ -87,7 +87,8 @@ The implementation is distributed across the following areas:
 - W22 resource mutation remains fail-closed where central permission broker wiring and update-over-existing-target semantics are not complete.
 - W23 did not add `keyring` because `cargo-audit` and `cargo-deny` are unavailable and native disposable credential fixtures are not approved. The existing unavailable adapter remains active.
 - W25 implements local sanitized notification metadata/outbox/pairing only; no Telegram dependency, credentials or live delivery was added.
-- W26 was limited to macOS/local and repository checks because Linux/Windows runners and release archive inputs were not available in this workspace.
+- W26 was limited to macOS/local and repository checks. Docker Linux qualification reached a Rust 1.88 dependency build but exceeded the 30-minute cold-build timeout; Windows runners and release archive inputs remain unavailable locally.
+- The workspace MSRV declaration was corrected from Rust 1.85 to Rust 1.88 because the locked dependency graph requires Rust 1.88. Clippy 1.98 compatibility fixes were applied mechanically and the full local workspace gate passed afterward.
 
 ## Issues Encountered And Resolved
 

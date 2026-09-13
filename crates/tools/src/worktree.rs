@@ -164,12 +164,12 @@ impl WorktreeManager {
         let target_head = self
             .rev_parse(&request.target_ref, cancellation.clone())
             .await?;
-        if let Some(expected) = request.expected_target_head.as_deref() {
-            if expected != target_head {
-                return Err(ToolError::Failed(format!(
-                    "expected target HEAD {expected}, found {target_head}"
-                )));
-            }
+        if let Some(expected) = request.expected_target_head.as_deref()
+            && expected != target_head
+        {
+            return Err(ToolError::Failed(format!(
+                "expected target HEAD {expected}, found {target_head}"
+            )));
         }
         let branch = format!("w08/{}", safe_name(&request.worker_id)?);
         let path = self.metadata_root.join(&request.worker_id);

@@ -302,10 +302,10 @@ fn validate_text(value: &str, max_bytes: usize) -> Result<(), McpError> {
 }
 
 fn validate_server_capabilities(result: &Value) -> Result<(), McpError> {
-    if let Some(version) = result.get("protocolVersion") {
-        if version.as_str() != Some(MCP_PROTOCOL_VERSION) {
-            return Err(McpError::Protocol("MCP protocol version mismatch".into()));
-        }
+    if let Some(version) = result.get("protocolVersion")
+        && version.as_str() != Some(MCP_PROTOCOL_VERSION)
+    {
+        return Err(McpError::Protocol("MCP protocol version mismatch".into()));
     }
     let tools = result
         .get("capabilities")

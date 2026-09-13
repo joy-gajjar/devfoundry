@@ -1,6 +1,6 @@
 # Supported Platforms
 
-The release workflow builds the targets listed in `release/platforms.json`. A platform is supported when its release archive builds, its checksum verifies, and the workspace tests pass on the associated GitHub Actions runner.
+The release workflow builds the targets listed in `release/platforms.json`. A platform is supported when its release archive builds, its checksum verifies, and the workspace tests pass on the associated GitHub Actions runner. The workspace MSRV is Rust 1.88 because the locked dependency graph requires that floor.
 
 | Target | Runner | Artifact | Status |
 | --- | --- | --- | --- |
