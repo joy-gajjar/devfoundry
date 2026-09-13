@@ -94,6 +94,8 @@ Status: accepted. Core patching uses a repository-local, line-oriented patch env
 
 ## Open Decisions
 
+- 2026-09-13: W09 starts with a pure, sequential scheduler policy and immutable worker/evidence contracts. It does not add a migration or route until durable lease/attempt/evidence persistence can be composed through existing public APIs. Reviewed evidence cannot imply acceptance or Git integration; unknown child effects are never automatically replayed.
+
 - ULID versus UUID for public IDs.
 - Exact config format and migration policy.
 - Whether provider streaming deltas are durable individually or only at settlement.

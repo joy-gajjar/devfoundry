@@ -18,9 +18,16 @@ use tokio::sync::{Mutex, oneshot};
 use tokio_util::sync::CancellationToken;
 
 mod context;
+mod scheduler;
 mod tasks;
+mod workers;
 pub use context::ContextManifestBuilder;
+pub use scheduler::{
+    Assignment, Blocker, DependencyReceipt, Scheduler, SchedulerError, SchedulerLimits,
+    SchedulerTask, TaskAttemptState, dependency_readiness,
+};
 pub use tasks::TaskService;
+pub use workers::{EvidenceBundle, WorkerBrief, WorkerFailure, WorkerOutcome};
 
 #[derive(Debug, Error)]
 pub enum CoreError {

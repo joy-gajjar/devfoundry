@@ -44,7 +44,7 @@ Transcript, input, tool activity, dialogs, reconnect, session management. Gate: 
 
 ## Gate 7: Advanced Runtime
 
-Compaction, queued prompts, subagents, MCP/LSP, worktrees, PTY. Gate: stress and recovery suite.
+W09 scheduler policy and immutable worker/evidence contracts are implemented and tested in isolation. Durable leases/attempts, restart-safe execution, worker projections, and full stress/recovery remain pending. Compaction, queued prompts, subagents, MCP/LSP, worktrees, and PTY remain separate advanced-runtime work. Gate: storage-backed scheduler plus stress and recovery suite.
 
 ## Gate 8: Ecosystem And Release
 
