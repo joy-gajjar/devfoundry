@@ -245,8 +245,12 @@ mod tests {
     }
 
     #[cfg(target_os = "macos")]
+    #[ignore = "requires DEVFOUNDRY_RUN_KEYCHAIN_TEST=1 and a disposable fixture"]
     #[tokio::test]
     async fn mac_keychain_fixture_resolves_without_exposing_value() {
+        if std::env::var("DEVFOUNDRY_RUN_KEYCHAIN_TEST").as_deref() != Ok("1") {
+            return;
+        }
         let request = SecretBindingRequest::new(
             SecretReference::new("devfoundry-test", "fixture"),
             ProjectId::new(),
