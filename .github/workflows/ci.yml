@@ -54,3 +54,30 @@ jobs:
         run: cargo test -p devfoundry-tui --all-targets
       - name: Verify Windows Job Object descendant cleanup
         run: cargo test -p devfoundry-tools command_timeout_kills_descendants_in_job_object -- --nocapture
+
+  browser:
+    name: Browser workspace
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/workspace
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/workspace/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
+
+  distribution-policy:
+    name: Distribution policy validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/validate-secretless.sh

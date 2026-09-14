@@ -1,35 +1,33 @@
 # Security Policy
 
-## Reporting A Vulnerability
+DevFoundry is under active development. Do not use this repository's current
+status as a claim of production security or platform completeness.
 
-Do not report an unpatched vulnerability in a public issue, pull request, chat,
-or release discussion. Use GitHub's **Report a vulnerability** button on the
-repository Security tab when private vulnerability reporting is enabled. If
-that option is unavailable, contact the repository owner privately and mark the
-message `security-sensitive`; do not attach secrets or private project data.
+## Reporting a Vulnerability
 
-Include:
+Please do not publish credentials, exploit details, or sensitive reproduction
+data in a public issue. Use GitHub's private security advisory/reporting flow
+for this repository when available. If that flow is not enabled, open a minimal
+public issue containing only the affected area and the phrase `security report`
+so a maintainer can provide a private channel. Never include tokens or secret
+values in the issue.
 
-- affected release, platform, and commit if known;
-- impact and the security boundary involved;
-- minimal reproduction steps or a safe proof of concept;
-- whether the issue is already public or being actively exploited; and
-- a safe contact method and preferred disclosure credit.
+## Security Model
 
-Remove provider tokens, authorization headers, signing material, private keys,
-project contents, and personal data before sending a report. If a log or
-fixture is necessary, replace sensitive values with stable placeholders.
+Read [`docs/security.md`](docs/security.md) for the detailed model. Important
+properties include:
 
-Maintainers should acknowledge a report within five business days, triage its
-severity, coordinate a fix and disclosure date with the reporter, and credit
-the reporter unless anonymity is requested. Do not promise a severity or
-disclosure date before triage.
+- Tool capabilities and permissions are explicit and separated by trust domain.
+- Filesystem operations enforce project-root, traversal, symlink, size, and
+  stale-content checks.
+- Process operations bound arguments, output, timeouts, cancellation, and
+  descendant cleanup where supported.
+- Provider credentials are not inherited by child tools or serialized into
+  exports and diagnostics.
+- Native Keychain resolution requires a validated secret binding and is
+  fail-closed on unsupported platforms.
 
-The repository's fuller scope, secret-handling rules, and release gates are in
-[`docs/security.md`](docs/security.md).
+## Dependency Advisories
 
-## Supported Versions
-
-Security fixes target the current release line. Upgrade to the latest release
-and use the documented rollback procedure if an upgrade causes an operational
-regression.
+Run `cargo audit` and `cargo deny check` before dependency changes. The current
+RUSTSEC-2023-0071 exception is narrowly documented in [`.cargo/audit.toml`](.cargo/audit.toml)
