@@ -1,0 +1,6 @@
+[advisories]
+# RUSTSEC-2023-0071 is retained only by SQLx's optional PostgreSQL package
+# metadata. The supported build enables SQLite only, and cargo tree confirms
+# no active macOS dependency path to rsa. Revisit this exception when SQLx
+# publishes a graph that removes rsa from the lockfile.
+ignore = ["RUSTSEC-2023-0071"]

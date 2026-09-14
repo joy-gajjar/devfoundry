@@ -9,6 +9,7 @@ pub(crate) trait SecretStore: Send + Sync {
     async fn resolve(
         &self,
         request: SecretBindingRequest,
+        binding: &SecretBinding,
     ) -> Result<SecretHandle, SecretStoreError>;
 }
 
@@ -88,34 +89,78 @@ impl SecretStore for FakeSecretStore {
     async fn resolve(
         &self,
         request: SecretBindingRequest,
+        binding: &SecretBinding,
     ) -> Result<SecretHandle, SecretStoreError> {
         if self.locked {
             return Err(SecretStoreError::Unavailable);
         }
+        request.validate(binding)?;
         let entries = self.entries.read().await;
-        let Some((binding, value)) = entries.get(&request.reference.id) else {
+        let Some((stored_binding, value)) = entries.get(&request.reference.id) else {
             return Err(SecretStoreError::NotFound);
         };
-        request.validate(binding)?;
+        if stored_binding != binding {
+            return Err(SecretStoreError::NotFound);
+        }
         Ok(SecretHandle {
             value: value.clone(),
         })
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 #[allow(dead_code)]
-struct MacKeychainStore;
+struct MacKeychainStore {
+    service: String,
+    account: String,
+}
+
+impl MacKeychainStore {
+    #[cfg(test)]
+    fn new(service: impl Into<String>, account: impl Into<String>) -> Self {
+        Self {
+            service: service.into(),
+            account: account.into(),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn entry(&self) -> Result<keyring::Entry, SecretStoreError> {
+        keyring::Entry::new(&self.service, &self.account).map_err(|_| SecretStoreError::Unavailable)
+    }
+}
+
+impl Default for MacKeychainStore {
+    fn default() -> Self {
+        Self {
+            service: "devfoundry".to_owned(),
+            account: "copilot".to_owned(),
+        }
+    }
+}
 
 #[async_trait]
 impl SecretStore for MacKeychainStore {
     async fn resolve(
         &self,
-        _request: SecretBindingRequest,
+        request: SecretBindingRequest,
+        binding: &SecretBinding,
     ) -> Result<SecretHandle, SecretStoreError> {
-        // No vetted Keychain dependency is available in this workspace. Never
-        // substitute an environment/config-file/CLI fallback.
-        Err(SecretStoreError::Unavailable)
+        request.validate(binding)?;
+        #[cfg(target_os = "macos")]
+        {
+            let entry = self.entry()?;
+            return entry
+                .get_password()
+                .map(|value| SecretHandle { value })
+                .map_err(|_| SecretStoreError::Unavailable);
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (request, binding);
+            Err(SecretStoreError::Unavailable)
+        }
     }
 }
 
@@ -133,7 +178,8 @@ mod tests {
         let request = SecretBindingRequest::new(reference, project);
         let store = FakeSecretStore::with_entry(binding, "secret-value");
 
-        let handle = store.resolve(request).await.unwrap();
+        let binding = store.entries.read().await.get("copilot").unwrap().0.clone();
+        let handle = store.resolve(request, &binding).await.unwrap();
         assert_eq!(handle.expose_for_test(), "secret-value");
     }
 
@@ -143,14 +189,15 @@ mod tests {
         let reference = SecretReference::new("copilot", "Copilot");
         let request = SecretBindingRequest::new(reference, project);
         let store = FakeSecretStore::locked();
+        let binding = SecretBinding::new(request.reference.clone(), BindingScope::Project(project));
 
         assert!(matches!(
-            store.resolve(request.clone()).await,
+            store.resolve(request.clone(), &binding).await,
             Err(SecretStoreError::Unavailable)
         ));
         let empty = FakeSecretStore::default();
         assert!(matches!(
-            empty.resolve(request).await,
+            empty.resolve(request, &binding).await,
             Err(SecretStoreError::NotFound)
         ));
     }
@@ -162,7 +209,8 @@ mod tests {
         let binding = SecretBinding::new(reference.clone(), BindingScope::Project(project));
         let request = SecretBindingRequest::new(reference, project);
         let store = FakeSecretStore::with_entry(binding, "secret-value");
-        let handle = store.resolve(request).await.unwrap();
+        let binding = store.entries.read().await.get("copilot").unwrap().0.clone();
+        let handle = store.resolve(request, &binding).await.unwrap();
         let debug = format!("{handle:?}");
 
         assert!(!debug.contains("secret-value"));
@@ -174,10 +222,11 @@ mod tests {
         let request =
             SecretBindingRequest::new(SecretReference::new("copilot", "Copilot"), project);
         let store = FakeSecretStore::default();
+        let binding = SecretBinding::new(request.reference.clone(), BindingScope::Project(project));
 
         // The fake store has no ambient-environment path, so this remains a
         // deterministic missing-reference denial regardless of provider setup.
-        let result = store.resolve(request).await;
+        let result = store.resolve(request, &binding).await;
         assert!(matches!(result, Err(SecretStoreError::NotFound)));
     }
 
@@ -185,9 +234,31 @@ mod tests {
     async fn unavailable_keychain_adapter_fails_closed() {
         let request =
             SecretBindingRequest::new(SecretReference::new("copilot", "Copilot"), ProjectId::new());
+        let binding = SecretBinding::new(
+            request.reference.clone(),
+            BindingScope::Project(request.project_id),
+        );
         assert!(matches!(
-            MacKeychainStore.resolve(request).await,
+            MacKeychainStore::default().resolve(request, &binding).await,
             Err(SecretStoreError::Unavailable)
         ));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn mac_keychain_fixture_resolves_without_exposing_value() {
+        let request = SecretBindingRequest::new(
+            SecretReference::new("devfoundry-test", "fixture"),
+            ProjectId::new(),
+        );
+        let store = MacKeychainStore::new("devfoundry-test-credential", "devfoundry-test");
+        let binding = SecretBinding::new(
+            request.reference.clone(),
+            BindingScope::Project(request.project_id),
+        );
+
+        let handle = store.resolve(request, &binding).await.unwrap();
+        assert!(!handle.expose_for_test().is_empty());
+        assert!(!format!("{handle:?}").contains(handle.expose_for_test()));
     }
 }

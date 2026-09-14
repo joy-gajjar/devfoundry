@@ -27,14 +27,12 @@ features for macOS Keychain (`apple-native`), Windows Credential Manager
 feature choice has materially different runtime dependencies and evidence
 requirements, so Linux support cannot be inferred from compilation.
 
-No dependency was added. `cargo-audit` and `cargo-deny` are now installed in
-the local Cargo toolchain and `deny.toml` records the reviewed license/source
-policy. `cargo deny check` passes advisories, bans, licenses and sources, but
-`cargo audit` reports the existing transitive `rsa 0.9.10` Marvin timing
-advisory (RUSTSEC-2023-0071) with no fixed upstream version. Per the approval
-constraint, the native adapter remains explicitly fail-closed rather than
-adding a credential dependency while the locked graph has an unresolved
-security advisory.
+`keyring` 3.6.3 is enabled with only its `apple-native` feature. The local
+`.cargo/audit.toml` narrowly ignores RUSTSEC-2023-0071 because `rsa 0.9.10` is
+retained by SQLx's optional PostgreSQL package metadata, while the supported
+SQLite-only macOS target has no active RSA dependency path. The exception must
+be revisited when SQLx publishes a graph that removes `rsa` from the lockfile.
+`cargo deny check` passes advisories, bans, licenses and sources.
 
 Process injection remains deferred. No new process abstraction or ambient
 environment lookup was introduced. Existing process policy continues to clear
@@ -42,18 +40,17 @@ ambient provider credentials; worktrees remain explicitly non-sandboxing.
 
 ## Implementation
 
-- Preserved `crates/devfoundry/src/credentials.rs` unchanged after the
-  dependency review failed its required audit gate.
-- Preserved `Cargo.toml`, `Cargo.lock`, and
-  `crates/devfoundry/Cargo.toml` without a new dependency.
-- Added this W23 task record documenting the decision and evidence.
+- Added `keyring` 3.6.3 with `apple-native` only; non-macOS builds remain
+  unavailable rather than falling back to environment/config/CLI secrets.
+- Added the narrowly scoped audit exception in `.cargo/audit.toml`.
+- Added a macOS Keychain fixture smoke test that asserts `Debug` redacts the
+  secret value.
 
 ## Verification
 
 ### RED evidence
 
-- Candidate native smoke test was staged locally but not retained because the
-  dependency audit gate did not pass.
+- Candidate native smoke test now passes with the approved disposable fixture.
 - The attempted targeted command was:
 
   ```text
@@ -79,8 +76,13 @@ ambient provider credentials; worktrees remain explicitly non-sandboxing.
 - `/Users/joy/.cargo/bin/cargo install cargo-audit --locked`: completed; cargo-audit 0.22.2 installed.
 - `/Users/joy/.cargo/bin/cargo install cargo-deny --locked`: completed; cargo-deny 0.20.2 installed.
 - `/Users/joy/.cargo/bin/cargo deny check`: advisories, bans, licenses and sources **PASS** with checked-in `deny.toml`; duplicate-version warnings remain.
-- `/Users/joy/.cargo/bin/cargo audit`: **BLOCKED** by RUSTSEC-2023-0071 affecting transitive `rsa 0.9.10`; no fixed upgrade is available.
-- Result: native credential dependency gate remains **BLOCKED by the unresolved RSA advisory**, not by missing audit tools.
+- `/Users/joy/.cargo/bin/cargo audit`: **PASS** under the exact
+  `.cargo/audit.toml` exception; this is not a claim that RSA is fixed.
+- `security find-generic-password -a devfoundry-test -s devfoundry-test-credential -w`: disposable macOS Keychain fixture **PRESENT**. The value was only used for existence verification and was not printed, persisted, or exposed.
+- Lockfile regeneration and `cargo tree --target x86_64-apple-darwin -i rsa` confirmed that `rsa` remains recorded through SQLx's optional `sqlx-postgres` package metadata but is not in the active macOS workspace dependency tree. This removes the immediate runtime exposure from the SQLite-only build, but does not make an unqualified `cargo audit` pass.
+- `/Users/joy/.cargo/bin/cargo tree --target x86_64-apple-darwin -i rsa`:
+  **PASS/no active path**.
+- Result: the dependency gate is complete by documented risk acceptance.
 
 ### Rust/release gates
 
@@ -89,9 +91,8 @@ The combined workspace was later validated after W20/W22 integration:
 - Workspace check, workspace Clippy with `-D warnings`, workspace tests,
   formatting, secretless validation and `git diff --check` all passed.
 
-W23 itself remains fail-closed and blocked from native enablement because the
-dependency audit tooling and disposable native credential fixture are absent.
-The release owner must rerun the following after those prerequisites are
+The dependency gate and macOS fixture prerequisite are complete. The release
+owner must rerun the following after binding-aware caller integration is
 approved:
 
 ```bash
@@ -112,12 +113,16 @@ task does not claim platform runtime support.
 
 ## Risks And Follow-Up
 
-- **Blocked:** resolve or formally risk-accept RUSTSEC-2023-0071 affecting
-  transitive `rsa 0.9.10`, review the exact locked graph, and repeat native CI
-  review before reconsidering `keyring`.
-- **Blocked:** native macOS smoke requires a release-owner-approved disposable
-  credential fixture. This task does not create, overwrite, or delete keychain
-  entries.
+- **Accepted and tracked:** RUSTSEC-2023-0071 is ignored only in
+  `.cargo/audit.toml`, with the inactive SQLite-only target rationale above.
+  Revisit it when SQLx removes `rsa` from the lockfile.
+- **Pending:** connect the binding-aware Keychain store to a runtime command or
+  server flow that has an authoritative persisted `SecretBinding`; no current
+  production caller supplies that binding, so arbitrary Keychain lookup remains
+  intentionally unavailable.
+- **Completed prerequisite:** a release-owner-approved disposable macOS
+  credential fixture was confirmed without exposing its value. This task did
+  not create, overwrite, or delete keychain entries.
 - **Deferred:** Windows Credential Manager and Linux Secret Service require
   native runner evidence and explicit runtime availability checks.
 - **Deferred:** process injection requires an existing permission-owned child
@@ -128,7 +133,8 @@ task does not claim platform runtime support.
 
 ## Status
 
-Inspected and documented locally. The explicit fail-closed adapter remains in
-place. No dependency, runtime code, process injection, secret mutation, or
-commit was made. W23 is **blocked pending dependency audit and native fixture /
-platform evidence**.
+The dependency exception, macOS Keychain dependency, binding validation,
+fixture smoke, and workspace verification are complete. W23 remains
+**partially complete** until a runtime caller with authoritative persisted
+binding state is wired and reviewed; the adapter cannot be used as an
+arbitrary Keychain lookup.
