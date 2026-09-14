@@ -27,10 +27,14 @@ features for macOS Keychain (`apple-native`), Windows Credential Manager
 feature choice has materially different runtime dependencies and evidence
 requirements, so Linux support cannot be inferred from compilation.
 
-No dependency was added. The repository does not have `cargo-audit` or
-`cargo-deny` installed, and the required dependency audit therefore did not
-pass. Per the approval constraint, the native adapter remains explicitly
-fail-closed rather than adding an unaudited credential dependency.
+No dependency was added. `cargo-audit` and `cargo-deny` are now installed in
+the local Cargo toolchain and `deny.toml` records the reviewed license/source
+policy. `cargo deny check` passes advisories, bans, licenses and sources, but
+`cargo audit` reports the existing transitive `rsa 0.9.10` Marvin timing
+advisory (RUSTSEC-2023-0071) with no fixed upstream version. Per the approval
+constraint, the native adapter remains explicitly fail-closed rather than
+adding a credential dependency while the locked graph has an unresolved
+security advisory.
 
 Process injection remains deferred. No new process abstraction or ambient
 environment lookup was introduced. Existing process policy continues to clear
@@ -72,7 +76,11 @@ ambient provider credentials; worktrees remain explicitly non-sandboxing.
   `cargo-audit` subcommand installed.
 - `/Users/joy/.cargo/bin/cargo deny --version`: unavailable; no `cargo-deny`
   subcommand installed.
-- Result: dependency audit gate **BLOCKED**, so no dependency was added.
+- `/Users/joy/.cargo/bin/cargo install cargo-audit --locked`: completed; cargo-audit 0.22.2 installed.
+- `/Users/joy/.cargo/bin/cargo install cargo-deny --locked`: completed; cargo-deny 0.20.2 installed.
+- `/Users/joy/.cargo/bin/cargo deny check`: advisories, bans, licenses and sources **PASS** with checked-in `deny.toml`; duplicate-version warnings remain.
+- `/Users/joy/.cargo/bin/cargo audit`: **BLOCKED** by RUSTSEC-2023-0071 affecting transitive `rsa 0.9.10`; no fixed upgrade is available.
+- Result: native credential dependency gate remains **BLOCKED by the unresolved RSA advisory**, not by missing audit tools.
 
 ### Rust/release gates
 
@@ -104,9 +112,9 @@ task does not claim platform runtime support.
 
 ## Risks And Follow-Up
 
-- **Blocked:** install `cargo-audit`/`cargo-deny` through the approved toolchain
-  process, review the exact locked dependency graph, and repeat the MSRV and
-  native CI review before reconsidering `keyring`.
+- **Blocked:** resolve or formally risk-accept RUSTSEC-2023-0071 affecting
+  transitive `rsa 0.9.10`, review the exact locked graph, and repeat native CI
+  review before reconsidering `keyring`.
 - **Blocked:** native macOS smoke requires a release-owner-approved disposable
   credential fixture. This task does not create, overwrite, or delete keychain
   entries.
