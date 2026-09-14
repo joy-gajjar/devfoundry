@@ -71,11 +71,15 @@ pub enum AgentPolicy {
 
 impl AgentPolicy {
     fn for_session(session: &Session) -> Self {
-        if session.agent.0 == "plan" {
+        if matches!(session.agent.0.as_str(), "plan" | "review" | "test") {
             Self::Plan
         } else {
             Self::Build
         }
+    }
+
+    fn known(agent: &str) -> bool {
+        matches!(agent, "boss" | "build" | "plan" | "review" | "test")
     }
 
     fn allows(self, name: &str) -> bool {
@@ -322,6 +326,12 @@ impl SessionRunner {
         cancellation: CancellationToken,
         session: Session,
     ) -> Result<Message, CoreError> {
+        if !AgentPolicy::known(&session.agent.0) {
+            return Err(CoreError::Context(format!(
+                "unknown agent profile: {}",
+                session.agent.0
+            )));
+        }
         let user = Message {
             id: devfoundry_schema::MessageId::new(),
             session_id: session.id,

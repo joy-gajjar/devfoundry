@@ -597,6 +597,17 @@ async fn create_session(
             "path and body project IDs differ",
         ));
     }
+    let agent = request.agent.unwrap_or_else(|| AgentName("build".into()));
+    if !matches!(
+        agent.0.as_str(),
+        "boss" | "build" | "plan" | "review" | "test"
+    ) {
+        return Err(error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "unknown_agent",
+            "agent profile is not supported",
+        ));
+    }
     let now = Utc::now();
     let session = Session {
         id: SessionId::new(),
@@ -604,7 +615,7 @@ async fn create_session(
         title: request
             .title
             .unwrap_or_else(|| format!("Session {}", now.format("%Y-%m-%d %H:%M"))),
-        agent: request.agent.unwrap_or_else(|| AgentName("build".into())),
+        agent,
         model: request.model.unwrap_or_else(|| ModelRef {
             provider: ProviderName("github-copilot".into()),
             model: ModelName("default".into()),
@@ -708,6 +719,16 @@ async fn update_session(
         session.title = title;
     }
     if let Some(agent) = request.agent {
+        if !matches!(
+            agent.0.as_str(),
+            "boss" | "build" | "plan" | "review" | "test"
+        ) {
+            return Err(error(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "unknown_agent",
+                "agent profile is not supported",
+            ));
+        }
         session.agent = agent;
     }
     if let Some(model) = request.model {

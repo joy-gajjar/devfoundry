@@ -97,6 +97,22 @@ coverage. It presents chat, tasks, documents, workers, terminals, and previews
 as bounded projections. The browser is intentionally not a second server or a
 credential authority.
 
+## Agent Configuration and Worker Visibility
+
+The first Boss/Worker UI slice uses layered JSON configuration without moving
+security policy into user-editable files:
+
+- Global defaults: `${XDG_CONFIG_HOME:-$HOME/.config}/devfoundry/config.json`.
+- Project compatibility/configuration: `<project>/devfoundry.json`.
+- Project values override global values; missing values use built-in defaults.
+- Built-in profiles are `boss`, `build`, `plan`, `review`, and `test`.
+- The TUI exposes Agent Settings and a read-only Worker Dashboard.
+
+`boss` currently expresses delegation intent and worker limits; it does not
+automatically decompose prompts, spawn workers, merge worktrees, or accept
+results. Worker evidence remains distinct from acceptance. Custom plugin
+agents, merge/conflict UI, and automatic orchestration remain deferred.
+
 ## Current Deferred Areas
 
 This architecture does not claim completion of the full product backlog. The

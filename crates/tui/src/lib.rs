@@ -54,25 +54,75 @@ pub struct TuiState {
     pub command_palette: bool,
     pub spinner: usize,
     pub scroll_mode: bool,
+    pub agent_settings: AgentSettingsState,
+    pub worker_dashboard: WorkerDashboardState,
     pub terminal: TerminalPaneState,
     pending_prompt: Option<String>,
     dismissed_permission: Option<devfoundry_schema::PermissionRequestId>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgentSettingsState {
+    pub open: bool,
+    pub profiles: Vec<String>,
+    pub selected: usize,
+    pub model: String,
+    pub step_limit: u32,
+    pub max_workers: u32,
+    pub source: String,
+}
+
+impl Default for AgentSettingsState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            profiles: ["boss", "build", "plan", "review", "test"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            selected: 1,
+            model: "default".into(),
+            step_limit: 12,
+            max_workers: 1,
+            source: "default".into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WorkerDashboardState {
+    pub open: bool,
+    pub loading: bool,
+    pub error: Option<String>,
+    pub rows: Vec<WorkerRow>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkerRow {
+    pub task: String,
+    pub profile: String,
+    pub status: String,
+    pub evidence: String,
+    pub failure: Option<String>,
+}
+
 pub use terminal::TerminalPaneState;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PermissionApprovalAction {
     Allow,
     Deny,
     Cancel,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Command {
     Quit,
     Interrupt,
     Refresh,
+    AgentSettings,
+    AgentSelected(String),
+    WorkerDashboard,
 }
 
 impl TuiState {
@@ -181,6 +231,19 @@ impl TuiState {
         if key.kind == KeyEventKind::Release {
             return None;
         }
+        if self.agent_settings.open {
+            match key.code {
+                KeyCode::Up => {
+                    self.agent_settings.selected = self.agent_settings.selected.saturating_sub(1)
+                }
+                KeyCode::Down => {
+                    self.agent_settings.selected = (self.agent_settings.selected + 1)
+                        .min(self.agent_settings.profiles.len().saturating_sub(1));
+                }
+                _ => {}
+            }
+            return None;
+        }
         match key.code {
             KeyCode::Char(']')
                 if key.modifiers.contains(event::KeyModifiers::CONTROL)
@@ -194,7 +257,11 @@ impl TuiState {
                 None
             }
             KeyCode::Esc => {
-                if self.command_palette {
+                if self.agent_settings.open {
+                    self.agent_settings.open = false;
+                } else if self.worker_dashboard.open {
+                    self.worker_dashboard.open = false;
+                } else if self.command_palette {
                     self.command_palette = false;
                 } else {
                     self.should_exit = true;
@@ -302,6 +369,15 @@ impl TuiState {
     }
 
     pub fn command(&mut self, key: KeyEvent) -> Option<Command> {
+        if self.agent_settings.open && key.code == KeyCode::Enter {
+            let profile = self
+                .agent_settings
+                .profiles
+                .get(self.agent_settings.selected)?
+                .clone();
+            self.agent_settings.open = false;
+            return Some(Command::AgentSelected(profile));
+        }
         if !self.command_palette {
             return None;
         }
@@ -317,6 +393,16 @@ impl TuiState {
             KeyCode::Char('r') | KeyCode::Char('R') => {
                 self.command_palette = false;
                 Some(Command::Refresh)
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') => {
+                self.command_palette = false;
+                self.agent_settings.open = true;
+                Some(Command::AgentSettings)
+            }
+            KeyCode::Char('w') | KeyCode::Char('W') => {
+                self.command_palette = false;
+                self.worker_dashboard.open = true;
+                Some(Command::WorkerDashboard)
             }
             _ => None,
         }
@@ -493,9 +579,91 @@ pub fn render(frame: &mut Frame<'_>, state: &TuiState) {
     );
     frame.render_widget(footer, layout[2]);
 
+    if state.agent_settings.open {
+        render_agent_settings(frame, state);
+    }
+    if state.worker_dashboard.open {
+        render_worker_dashboard(frame, state);
+    }
+
     if state.permission_modal {
         render_permission_modal(frame, state);
     }
+}
+
+fn render_agent_settings(frame: &mut Frame<'_>, state: &TuiState) {
+    let area = centered_rect(70, 70, frame.area());
+    let lines = state
+        .agent_settings
+        .profiles
+        .iter()
+        .enumerate()
+        .map(|(index, profile)| {
+            let marker = if index == state.agent_settings.selected {
+                ">"
+            } else {
+                " "
+            };
+            Line::from(format!("{marker} {profile}"))
+        })
+        .chain([
+            Line::from(""),
+            Line::from(format!("Model: {}", state.agent_settings.model)),
+            Line::from(format!("Step limit: {}", state.agent_settings.step_limit)),
+            Line::from(format!("Workers: {}", state.agent_settings.max_workers)),
+            Line::from(format!("Source: {}", state.agent_settings.source)),
+            Line::from(""),
+            Line::from("Up/Down select | Esc close | custom profiles unavailable"),
+        ])
+        .collect::<Vec<_>>();
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).block(
+            Block::default()
+                .title("AGENT SETTINGS")
+                .borders(Borders::ALL),
+        ),
+        area,
+    );
+}
+
+fn render_worker_dashboard(frame: &mut Frame<'_>, state: &TuiState) {
+    let area = centered_rect(80, 70, frame.area());
+    let mut lines = vec![
+        Line::from("Workers are evidence, not acceptance."),
+        Line::from(""),
+    ];
+    if state.worker_dashboard.loading {
+        lines.push(Line::from("Loading worker state..."));
+    }
+    if let Some(error) = &state.worker_dashboard.error {
+        lines.push(Line::from(format!("Error: {error}")));
+    }
+    if state.worker_dashboard.rows.is_empty() && !state.worker_dashboard.loading {
+        lines.push(Line::from("No assigned workers."));
+    }
+    for row in &state.worker_dashboard.rows {
+        lines.push(Line::from(format!(
+            "{} | {} | {} | evidence: {}",
+            row.task, row.profile, row.status, row.evidence
+        )));
+        if let Some(failure) = &row.failure {
+            lines.push(Line::from(format!("  failure: {failure}")));
+        }
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from("Esc close"));
+    frame.render_widget(Clear, area);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .block(
+                Block::default()
+                    .title("WORKER DASHBOARD")
+                    .borders(Borders::ALL),
+            )
+            .wrap(Wrap { trim: true }),
+        area,
+    );
 }
 
 fn render_permission_modal(frame: &mut Frame<'_>, state: &TuiState) {
@@ -1403,6 +1571,28 @@ async fn run_connected_loop(
                             }
                             Command::Refresh => {
                                 state.connected = client.get_session(session_id).await.is_ok();
+                            }
+                            Command::AgentSettings | Command::WorkerDashboard => {}
+                            Command::AgentSelected(agent) => {
+                                match client
+                                    .update_session(
+                                        session_id,
+                                        &devfoundry_protocol::UpdateSessionRequest {
+                                            title: None,
+                                            agent: Some(devfoundry_schema::AgentName(
+                                                agent.clone(),
+                                            )),
+                                            model: None,
+                                        },
+                                    )
+                                    .await
+                                {
+                                    Ok(session) => state.agent = session.agent.0,
+                                    Err(error) => state.transcript.push(TranscriptEntry {
+                                        role: TranscriptRole::System,
+                                        text: error.to_string(),
+                                    }),
+                                }
                             }
                         }
                         continue;

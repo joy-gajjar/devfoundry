@@ -16,6 +16,8 @@ This is the prioritized backlog remaining before DevFoundry can be called produc
 
 ## P1: Core Feature Completion
 
+- Configurable built-in agent profiles, layered global/project settings, TUI Agent Settings, and read-only Worker Dashboard are implemented; automatic Boss decomposition, worker panes, merge/conflict UI, and arbitrary plugin agents remain deferred.
+
 - Multi-file patch rollback on hostile concurrent filesystem failures.
 - Regex grep and explicit secret-file policy.
 - Add persistent permission policies with once/session/project scopes.
