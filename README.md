@@ -45,6 +45,8 @@ flowchart LR
 The detailed component map and request lifecycle are in
 [`docs/architecture.md`](docs/architecture.md). The original planning record
 is preserved in [`docs/planning/02-system-architecture.md`](docs/planning/02-system-architecture.md).
+The interactive Archify version is available at
+[`docs/architecture/devfoundry-architecture.html`](docs/architecture/devfoundry-architecture.html).
 
 ## Repository Map
 

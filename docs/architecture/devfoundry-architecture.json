@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "DevFoundry Architecture",
+    "quality_profile": "showcase",
+    "locale": "en",
+    "viewBox": [1250, 700]
+  },
+  "components": [
+    {"id":"tui","label":"Ratatui TUI","type":"frontend","tag":"prompts, transcript","pos":[50,70],"size":[150,64]},
+    {"id":"browser","label":"Browser Workspace","type":"frontend","tag":"Vite projections","pos":[50,270],"size":[150,64]},
+    {"id":"api","label":"Axum API","type":"backend","tag":"versioned JSON/SSE","pos":[300,170],"size":[150,64]},
+    {"id":"runner","label":"Session Runner","type":"backend","tag":"admission and continuation","pos":[550,170],"size":[170,64]},
+    {"id":"core","label":"Core Policies","type":"security","tag":"contracts and bindings","pos":[820,170],"size":[170,64]},
+    {"id":"storage","label":"SQLite Storage","type":"database","tag":"events, recovery, backups","pos":[1070,70],"size":[150,64]},
+    {"id":"llm","label":"Copilot Provider","type":"external","tag":"bounded streaming","pos":[820,330],"size":[170,64]},
+    {"id":"tools","label":"Permissioned Tools","type":"backend","tag":"filesystem and process","pos":[550,330],"size":[170,64]},
+    {"id":"workers","label":"Worker Leases","type":"backend","tag":"attempts and evidence","pos":[820,490],"size":[170,64]},
+    {"id":"worktree","label":"Owned Worktree","type":"backend","tag":"integration boundary","pos":[1070,490],"size":[150,64]},
+    {"id":"keychain","label":"macOS Keychain","type":"security","tag":"binding; fail closed","pos":[1070,300],"size":[150,64]}
+  ],
+  "connections": [
+    {"from":"tui","to":"api","label":"local"},
+    {"from":"browser","to":"api","label":"HTTP/SSE","fromSide":"right","toSide":"bottom","via":[[230,302],[375,302]]},
+    {"from":"api","to":"runner","label":"validated"},
+    {"from":"runner","to":"core","label":"policy"},
+    {"from":"runner","to":"storage","label":"events","fromSide":"top","toSide":"bottom","via":[[635,120],[1145,120],[1145,150]]},
+    {"from":"runner","to":"llm","label":"stream","fromSide":"bottom","toSide":"top","labelDx":48},
+    {"from":"runner","to":"tools","label":"tools","fromSide":"bottom","toSide":"top","labelDx":-48,"labelDy":24},
+    {"from":"runner","to":"workers","label":"admitted","fromSide":"right","toSide":"left","via":[[760,202],[760,522],[820,522]]},
+    {"from":"workers","to":"worktree","label":"owned","fromSide":"right","toSide":"left"},
+    {"from":"core","to":"keychain","label":"binding","fromSide":"bottom","toSide":"top"}
+  ]
+}
